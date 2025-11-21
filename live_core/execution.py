@@ -33,6 +33,7 @@ class OrderManager:
         self._short_only_symbols: set[str] = set()
         self._highest_balance: float = cfg.account_balance
         self._recent_returns: Deque[float] = deque(maxlen=cfg.vol_window_trades)
+        self._last_confidence: Dict[str, float] = {}
 
     def evaluate_signals(self, symbol: str, signals: List[EntrySignal]) -> None:
         if not signals:
@@ -56,6 +57,17 @@ class OrderManager:
             if not self._is_direction_allowed(symbol, signal.direction):
                 logger.info(f"[{symbol}] Signal {signal.direction} übersprungen: Broker untersagt diese Richtung")
                 continue
+            # Überprüfe offene Positionen und Confidence-Steigerung
+            open_positions = self.adapter.get_positions(symbol)
+            confidence = float(signal.confidence or 0.0)
+            if open_positions:
+                last_conf = self._last_confidence.get(symbol, 0.0)
+                if confidence < last_conf + 0.07:
+                    logger.info(
+                        f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Offene Position vorhanden, "
+                        f"Confidence {confidence:.3f} nicht um 7% gestiegen (letzte: {last_conf:.3f})"
+                    )
+                    continue
             info = self.adapter.get_symbol_info(symbol)
             volume, risk_amount, risk_per_lot, stop_distance = self._calculate_volume(symbol, signal, info)
             direction = signal.direction.value if isinstance(signal.direction, Dir) else signal.direction
@@ -69,6 +81,8 @@ class OrderManager:
                 )
                 self._log_order(symbol, signal, result, volume, risk_amount, risk_per_lot, stop_distance)
                 should_continue = self._process_execution_result(symbol, signal.direction, result)
+                if result.get("retcode") == self.SUCCESS_RETCODE:
+                    self._last_confidence[symbol] = confidence
                 if not should_continue:
                     break
             except Exception as exc:
