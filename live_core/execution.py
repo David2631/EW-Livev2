@@ -19,6 +19,7 @@ logger = logging.getLogger("ew_live")
 
 class OrderManager:
     SUCCESS_RETCODE = 10009
+    STOP_AFTER_RETCODES = {10016, 10017, 10018}
     RETCODE_HINTS = {
         10007: "Invalid stops - Abstand liegt unter `trade_stops_level` oder Mindestabstand.",
         10030: "Unsupported filling mode - Broker akzeptiert andere `order_filling_mode`-Typen.",
@@ -67,7 +68,9 @@ class OrderManager:
                     tp=signal.take_profit,
                 )
                 self._log_order(symbol, signal, result, volume, risk_amount, risk_per_lot, stop_distance)
-                self._process_execution_result(symbol, signal.direction, result)
+                should_continue = self._process_execution_result(symbol, signal.direction, result)
+                if not should_continue:
+                    break
             except Exception as exc:
                 logger.error(f"[{symbol}] Fehler beim Platzieren der Order: {exc}")
 
@@ -176,11 +179,14 @@ class OrderManager:
         except Exception as exc:
             logger.warning(f"[{symbol}] Webhook-Benachrichtigung fehlgeschlagen: {exc}")
 
-    def _process_execution_result(self, symbol: str, direction: Dir, result: dict) -> None:
+    def _process_execution_result(self, symbol: str, direction: Dir, result: dict) -> bool:
         retcode = result.get("retcode")
         if retcode != self.SUCCESS_RETCODE:
             self._enter_cooldown(symbol)
         self._update_symbol_restrictions(symbol, direction, retcode)
+        if retcode in self.STOP_AFTER_RETCODES:
+            return False
+        return True
 
     def _is_symbol_on_cooldown(self, symbol: str) -> bool:
         expiry = self._cooldowns.get(symbol)
