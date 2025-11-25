@@ -98,7 +98,7 @@ class MetaTrader5Adapter:
 
     def get_symbol_tick(self, symbol: str) -> Optional[Dict[str, float]]:
         if self._mock:
-            return {"bid": 0.0, "ask": 0.0, "last": 0.0}
+            return None
         try:
             tick = mt5.symbol_info_tick(symbol)
             if tick is None:
@@ -261,8 +261,6 @@ class MetaTrader5Adapter:
             return {"symbol": symbol, "volume": volume, "direction": direction, "sl": sl, "tp": tp, "status": "fallback"}
 
     def modify_position_sl_tp(self, ticket: int, symbol: str, sl: Optional[float], tp: Optional[float]) -> dict:
-        if self._mock:
-            return {"status": "mock", "ticket": ticket, "sl": sl, "tp": tp}
         try:
             request: dict[str, Any] = {
                 "action": mt5.TRADE_ACTION_SLTP,
