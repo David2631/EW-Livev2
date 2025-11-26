@@ -40,8 +40,8 @@ class LiveConfig:
     prob_size_max: float = 1.5
     order_cooldown_seconds: int = 1
     entry_buffer_atr: float = 0.25
-    stop_loss_multiplier: float = 1.0
-    take_profit_multiplier: float = 1.5
+    stop_loss_multiplier: float = 1.5
+    take_profit_multiplier: float = 1.0
     atr_period: int = 14
     ema_fast: int = 34
     ema_slow: int = 144

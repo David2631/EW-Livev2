@@ -66,17 +66,43 @@ class OrderManager:
                     )
                     continue
             info = self.adapter.get_symbol_info(symbol)
-            volume, risk_amount, risk_per_lot, stop_distance = self._calculate_volume(symbol, signal, info)
+            stop_price, take_profit = self._scale_order_levels(signal)
+            volume, risk_amount, risk_per_lot, stop_distance = self._calculate_volume(symbol, signal, info, stop_price)
             direction = signal.direction.value if isinstance(signal.direction, Dir) else signal.direction
             try:
                 result = self.adapter.place_market_order(
                     symbol=symbol,
                     volume=volume,
                     direction=direction,
-                    sl=signal.stop_loss,
-                    tp=signal.take_profit,
+                    sl=stop_price,
+                    tp=take_profit,
                 )
-                self._log_order(symbol, signal, result, volume, risk_amount, risk_per_lot, stop_distance)
+                self._log_order(
+                    symbol,
+                    signal,
+                    result,
+                    volume,
+                    risk_amount,
+                    risk_per_lot,
+                    stop_distance,
+                    stop_price,
+                    take_profit,
+                )
+                self._log_adjustment(symbol, result)
+                self._log_filling_mode(symbol, result)
+                self._log_retcode_info(symbol, result)
+                self._notify_webhook(
+                    symbol,
+                    signal,
+                    result,
+                    volume,
+                    risk_amount,
+                    risk_per_lot,
+                    stop_distance,
+                    stop_price,
+                    take_profit,
+                )
+                self._record_expected_return(signal.entry_price, stop_price, take_profit)
                 should_continue = self._process_execution_result(symbol, signal.direction, result)
                 if result.get("retcode") == self.SUCCESS_RETCODE:
                     self._last_confidence[symbol] = confidence
@@ -84,6 +110,28 @@ class OrderManager:
                     break
             except Exception as exc:
                 logger.error(f"[{symbol}] Fehler beim Platzieren der Order: {exc}")
+
+    def _scale_order_levels(self, signal: EntrySignal) -> Tuple[float, float]:
+        entry = signal.entry_price
+        stop = signal.stop_loss
+        tp = signal.take_profit
+        stop_delta = abs(entry - stop)
+        tp_delta = abs(tp - entry)
+        stop_mult = max(1.0, self.cfg.stop_loss_multiplier)
+        tp_mult = max(0.1, self.cfg.take_profit_multiplier)
+        if stop_delta > 0:
+            scaled_stop_delta = stop_delta * stop_mult
+            if signal.direction == Dir.UP:
+                stop = entry - scaled_stop_delta
+            else:
+                stop = entry + scaled_stop_delta
+        if tp_delta > 0:
+            scaled_tp_delta = tp_delta * tp_mult
+            if signal.direction == Dir.UP:
+                tp = entry + scaled_tp_delta
+            else:
+                tp = entry - scaled_tp_delta
+        return stop, tp
 
     def _log_order(
         self,
@@ -94,10 +142,12 @@ class OrderManager:
         risk_amount: float,
         risk_per_lot: float,
         stop_distance: float,
+        stop_price: float,
+        take_profit: float,
     ) -> None:
         logger.info(
             f"[{symbol}] Order {signal.setup} {signal.direction} @ {signal.entry_price} "
-            f"SL={signal.stop_loss:.2f} TP={signal.take_profit:.2f} "
+            f"SL={stop_price:.2f} TP={take_profit:.2f} "
             f"Vol={volume:.3f} (risk={risk_amount:.2f}, stop={stop_distance:.5f},/lot={risk_per_lot:.3f}) -> {result}"
         )
 
@@ -157,6 +207,8 @@ class OrderManager:
         risk_amount: float,
         risk_per_lot: float,
         stop_distance: float,
+        stop_price: float,
+        take_profit: float,
     ) -> None:
         url = self.cfg.webhook_url
         if not url:
@@ -171,8 +223,8 @@ class OrderManager:
                 {"name": "Setup", "value": signal.setup, "inline": True},
                 {"name": "Volume", "value": f"{volume:.3f} Lots", "inline": True},
                 {"name": "Entry", "value": f"{signal.entry_price:.4f}", "inline": True},
-                {"name": "Stop", "value": f"{signal.stop_loss:.4f}", "inline": True},
-                {"name": "TP", "value": f"{signal.take_profit:.4f}", "inline": True},
+                {"name": "Stop", "value": f"{stop_price:.4f}", "inline": True},
+                {"name": "TP", "value": f"{take_profit:.4f}", "inline": True},
                 {"name": "Risk", "value": f"{risk_amount:.2f} | per lot {risk_per_lot:.3f}", "inline": True},
                 {"name": "Retcode", "value": result.get("retcode_description", str(result.get("retcode"))), "inline": True},
             ],
@@ -247,20 +299,19 @@ class OrderManager:
         scale = self.cfg.target_annual_vol / (std * 4)
         return max(0.4, min(1.6, scale))
 
-    def _record_expected_return(self, signal: EntrySignal) -> None:
+    def _record_expected_return(self, entry_price: float, stop_price: float, take_profit: float) -> None:
         if not self.cfg.use_vol_target:
             return
-        stop_distance = abs(signal.entry_price - signal.stop_loss)
-        tp_distance = abs(signal.take_profit - signal.entry_price)
+        stop_distance = abs(entry_price - stop_price)
+        tp_distance = abs(take_profit - entry_price)
         if stop_distance <= 0 or tp_distance <= 0:
             return
         self._recent_returns.append(tp_distance / stop_distance)
 
     def _calculate_volume(
-        self, symbol: str, signal: EntrySignal, info: Optional[Any]
+        self, symbol: str, signal: EntrySignal, info: Optional[Any], stop_price: float
     ) -> Tuple[float, float, float, float]:
         entry_price = signal.entry_price
-        stop_price = signal.stop_loss
         stop_distance = abs(entry_price - stop_price)
         balance = self._refresh_account_balance()
         base_risk_amount = max(0.0, self.cfg.risk_per_trade * balance)
