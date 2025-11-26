@@ -1,3 +1,4 @@
 pandas>=2.0
 numpy>=1.25
 MetaTrader5>=5.0; platform_system == "Windows"
+certifi>=2024.6

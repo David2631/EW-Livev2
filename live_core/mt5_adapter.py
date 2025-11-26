@@ -1,6 +1,7 @@
 """Wrapper um MetaTrader5, damit wir live Orders ausführen können."""
 from __future__ import annotations
 
+import math
 import os
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,7 @@ class MetaTrader5Adapter:
     """Minimaler Adapter für Zugang zu MT5 (oder Mock bei installiertem MT5)."""
 
     _MIN_STOP_POINTS = 10
+    _DISTANCE_EPS = 1e-6
     _SKIPPED_INVALID_STOP = "skipped-invalid-stop"
     _UNSUPPORTED_FILLING_RETCODE = 10030
     RETCODE_DESCRIPTIONS = {
@@ -36,6 +38,15 @@ class MetaTrader5Adapter:
         self.connected = False
         self._mock = mt5 is None
         self._symbol_cache: dict[str, "Any"] = {}
+
+    def _ensure_symbol_selected(self, symbol: str) -> None:
+        if self._mock:
+            return
+        info = mt5.symbol_info(symbol)
+        if info and getattr(info, "select", False):
+            return
+        if not mt5.symbol_select(symbol, True):
+            raise RuntimeError(f"Symbol {symbol} konnte nicht aktiviert werden: {mt5.last_error()}")
 
     def connect(self) -> None:
         if self._mock:
@@ -137,6 +148,54 @@ class MetaTrader5Adapter:
         min_points = max(stops_level, self._MIN_STOP_POINTS)
         return self._resolve_point(info) * max(min_points, 1)
 
+    def _normalize_price(self, info: "Any", value: float, direction: str, is_stop: bool) -> float:
+        if info is None:
+            return value
+        tick = getattr(info, "trade_tick_size", None) or getattr(info, "point", None)
+        digits = getattr(info, "digits", None)
+        if tick and tick > 0:
+            scaled = value / tick
+            if is_stop:
+                steps = math.floor(scaled + 1e-9) if direction == "UP" else math.ceil(scaled - 1e-9)
+            else:
+                steps = math.ceil(scaled - 1e-9) if direction == "UP" else math.floor(scaled + 1e-9)
+            return steps * tick
+        if digits is not None:
+            precision = max(0, int(digits))
+            rounded = round(value, precision)
+            if is_stop:
+                return min(rounded, value) if direction == "UP" else max(rounded, value)
+            return max(rounded, value) if direction == "UP" else min(rounded, value)
+        return value
+
+    def _normalize_stop(self, info: "Any", value: float, direction: str) -> float:
+        return self._normalize_price(info, value, direction, is_stop=True)
+
+    def _normalize_tp(self, info: "Any", value: float, direction: str) -> float:
+        return self._normalize_price(info, value, direction, is_stop=False)
+
+    def _resolve_trade_price(self, symbol: str, info: "Any", op: int) -> float:
+        if self._mock:
+            return getattr(info, "last", 0.0) or 0.0
+        tick = mt5.symbol_info_tick(symbol)
+        price = None
+        if tick is not None:
+            if op == mt5.ORDER_TYPE_BUY:
+                price = getattr(tick, "ask", None)
+            else:
+                price = getattr(tick, "bid", None)
+        if price is None or price <= 0:
+            self._ensure_symbol_selected(symbol)
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is not None:
+                price = getattr(tick, "ask", None) if op == mt5.ORDER_TYPE_BUY else getattr(tick, "bid", None)
+        if (price is None or price <= 0) and info is not None:
+            fallback = getattr(info, "ask", None) if op == mt5.ORDER_TYPE_BUY else getattr(info, "bid", None)
+            price = fallback or getattr(info, "last", None)
+        if price is None or price <= 0:
+            raise RuntimeError(f"Kein gültiger Preis für {symbol} verfügbar")
+        return price
+
     def _validate_stop_distance(
         self, price: float, sl: float, direction: str, info: "Any", min_distance: Optional[float] = None
     ) -> tuple[bool, float, float, str]:
@@ -150,7 +209,7 @@ class MetaTrader5Adapter:
             distance = sl - price
             if distance <= 0:
                 return False, distance, min_distance, "Stop liegt unter dem Verkaufspreis"
-        if distance < min_distance:
+        if distance + self._DISTANCE_EPS < min_distance:
             return False, distance, min_distance, f"Abstand {distance:.6f} < Mindestabstand {min_distance:.6f}"
         return True, distance, min_distance, ""
 
@@ -187,17 +246,22 @@ class MetaTrader5Adapter:
         if self._mock:
             return {"symbol": symbol, "volume": volume, "direction": direction, "sl": sl, "tp": tp, "status": "mock"}
         try:
+            self._ensure_symbol_selected(symbol)
             info = mt5.symbol_info(symbol)
             if info is None:
                 raise RuntimeError(f"Symbolinfo für {symbol} fehlt")
             op = mt5.ORDER_TYPE_BUY if direction == "UP" else mt5.ORDER_TYPE_SELL
-            tick = mt5.symbol_info_tick(symbol)
-            price = tick.ask if op == mt5.ORDER_TYPE_BUY else tick.bid
-            tp_safe = tp  # take profit typically does not require min distance
+            price = self._resolve_trade_price(symbol, info, op)
             min_distance = self._required_stop_distance(info)
-            sl_safe = self._adjust_stop(price, sl, direction, min_distance)
+            sl_candidate = self._adjust_stop(price, sl, direction, min_distance)
+            sl_safe = self._normalize_stop(info, sl_candidate, direction)
+            tp_safe = self._normalize_tp(info, tp, direction)
             valid_stop, distance, _, reason = self._validate_stop_distance(price, sl_safe, direction, info, min_distance)
             adjusted = sl_safe != sl
+            if not valid_stop:
+                sl_safe = self._adjust_stop(price, sl_safe, direction, min_distance)
+                sl_safe = self._normalize_stop(info, sl_safe, direction)
+                valid_stop, distance, _, reason = self._validate_stop_distance(price, sl_safe, direction, info, min_distance)
             if not valid_stop:
                 return {
                     "symbol": symbol,

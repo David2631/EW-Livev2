@@ -4,11 +4,14 @@ from __future__ import annotations
 import json
 import logging
 import math
+import ssl
 import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 from statistics import pstdev, StatisticsError
 from typing import Any, Dict, Deque, List, Optional, Tuple
+
+import certifi
 
 from .config import LiveConfig
 from .mt5_adapter import MetaTrader5Adapter
@@ -66,6 +69,9 @@ class OrderManager:
                     )
                     continue
             info = self.adapter.get_symbol_info(symbol)
+            if info is None:
+                logger.warning(f"[{symbol}] Keine Symbolinformationen verfügbar -> Signal übersprungen")
+                continue
             stop_price, take_profit = self._scale_order_levels(signal)
             volume, risk_amount, risk_per_lot, stop_distance = self._calculate_volume(symbol, signal, info, stop_price)
             direction = signal.direction.value if isinstance(signal.direction, Dir) else signal.direction
@@ -233,8 +239,9 @@ class OrderManager:
         payload = {"username": "EW Live Executor", "embeds": [embed]}
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        context = ssl.create_default_context(cafile=certifi.where())
         try:
-            urllib.request.urlopen(request, timeout=5)
+            urllib.request.urlopen(request, timeout=5, context=context)
         except Exception as exc:
             logger.warning(f"[{symbol}] Webhook-Benachrichtigung fehlgeschlagen: {exc}")
 
@@ -255,11 +262,11 @@ class OrderManager:
         return True
 
     def _update_symbol_restrictions(self, symbol: str, direction: Dir, retcode: Optional[int]) -> None:
-        if retcode == 10016:
+        if retcode == 10016 and direction == Dir.DOWN:
             self._long_only_symbols.add(symbol)
             self._short_only_symbols.discard(symbol)
             logger.warning(f"[{symbol}] Broker schränkt auf LONG ein (Retcode 10016)")
-        elif retcode == 10017:
+        elif retcode == 10017 and direction == Dir.UP:
             self._short_only_symbols.add(symbol)
             self._long_only_symbols.discard(symbol)
             logger.warning(f"[{symbol}] Broker schränkt auf SHORT ein (Retcode 10017)")
