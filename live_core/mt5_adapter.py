@@ -21,14 +21,24 @@ class MetaTrader5Adapter:
     _SKIPPED_INVALID_STOP = "skipped-invalid-stop"
     _UNSUPPORTED_FILLING_RETCODE = 10030
     RETCODE_DESCRIPTIONS = {
-        10000: "TRADE_RETCODE_DONE - Order erfolgreich",
-        10007: "TRADE_RETCODE_INVALID_STOPS - Stops zu nah am Preis",
-        10009: "TRADE_RETCODE_MARKET_CLOSED - Markt geschlossen",
-        10016: "TRADE_RETCODE_LONG_ONLY - Nur Long erlaubt",
-        10017: "TRADE_RETCODE_SHORT_ONLY - Nur Short erlaubt",
-        10018: "TRADE_RETCODE_TRADE_PROHIBITED - Trading verboten",
-        10030: "TRADE_RETCODE_INVALID_FILLING - Filling-Mode nicht erlaubt",
-        10044: "TRADE_RETCODE_TRADE_CONTEXT_BUSY - Context busy",
+        10004: "TRADE_RETCODE_REQUOTE - Requote erhalten",
+        10006: "TRADE_RETCODE_REJECT - Order vom Server abgelehnt",
+        10009: "TRADE_RETCODE_DONE - Order erfolgreich",
+        10010: "TRADE_RETCODE_DONE_PARTIAL - Order teilweise gefüllt",
+        10011: "TRADE_RETCODE_ERROR - Allgemeiner Trading-Fehler",
+        10014: "TRADE_RETCODE_INVALID_VOLUME - Volumen ungültig",
+        10015: "TRADE_RETCODE_INVALID_PRICE - Preis ungültig",
+        10016: "TRADE_RETCODE_INVALID_STOPS - Stops ungültig",
+        10017: "TRADE_RETCODE_TRADE_DISABLED - Symbol nicht handelbar",
+        10018: "TRADE_RETCODE_MARKET_CLOSED - Markt geschlossen",
+        10019: "TRADE_RETCODE_NO_MONEY - Nicht genug Margin",
+        10020: "TRADE_RETCODE_PRICE_CHANGED - Preis hat sich verändert",
+        10021: "TRADE_RETCODE_PRICE_OFF - Kein aktueller Preis",
+        10030: "TRADE_RETCODE_INVALID_FILL - Filling-Mode nicht erlaubt",
+        10031: "TRADE_RETCODE_CONNECTION - Verbindungsproblem",
+        10042: "TRADE_RETCODE_LONG_ONLY - Nur Long erlaubt",
+        10043: "TRADE_RETCODE_SHORT_ONLY - Nur Short erlaubt",
+        10044: "TRADE_RETCODE_CLOSE_ONLY - Nur Schliessen erlaubt",
     }
 
     def __init__(self, login: Optional[int] = None, password: Optional[str] = None, server: Optional[str] = None):

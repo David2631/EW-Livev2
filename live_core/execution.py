@@ -22,7 +22,9 @@ logger = logging.getLogger("ew_live")
 
 class OrderManager:
     SUCCESS_RETCODE = 10009
-    STOP_AFTER_RETCODES = {10016, 10017, 10018}
+    STOP_AFTER_RETCODES = {10017, 10018}
+    LONG_ONLY_RETCODE = 10042
+    SHORT_ONLY_RETCODE = 10043
     RETCODE_HINTS = {
         10007: "Invalid stops - Abstand liegt unter `trade_stops_level` oder Mindestabstand.",
         10030: "Unsupported filling mode - Broker akzeptiert andere `order_filling_mode`-Typen.",
@@ -73,6 +75,12 @@ class OrderManager:
                 logger.warning(f"[{symbol}] Keine Symbolinformationen verfügbar -> Signal übersprungen")
                 continue
             stop_price, take_profit = self._scale_order_levels(signal)
+            current_price = self._current_price(symbol, signal.direction)
+            if current_price is None:
+                logger.warning(f"[{symbol}] Kein aktueller Preis verfügbar -> Signal übersprungen")
+                continue
+            if not self._price_supports_order(symbol, signal.direction, current_price, stop_price, take_profit):
+                continue
             volume, risk_amount, risk_per_lot, stop_distance = self._calculate_volume(symbol, signal, info, stop_price)
             direction = signal.direction.value if isinstance(signal.direction, Dir) else signal.direction
             try:
@@ -116,6 +124,41 @@ class OrderManager:
                     break
             except Exception as exc:
                 logger.error(f"[{symbol}] Fehler beim Platzieren der Order: {exc}")
+
+    def _current_price(self, symbol: str, direction: Dir) -> Optional[float]:
+        tick = self.adapter.get_symbol_tick(symbol)
+        if not tick:
+            return None
+        price = tick.get("ask") if direction == Dir.UP else tick.get("bid")
+        if price is None or price <= 0:
+            return None
+        return float(price)
+
+    def _price_supports_order(self, symbol: str, direction: Dir, price: float, stop_price: float, take_profit: float) -> bool:
+        eps = 1e-6
+        if direction == Dir.UP:
+            if price <= stop_price + eps:
+                logger.info(
+                    f"[{symbol}] Signal {direction} übersprungen: aktueller Preis {price:.5f} <= Stop {stop_price:.5f}"
+                )
+                return False
+            if price >= take_profit - eps:
+                logger.info(
+                    f"[{symbol}] Signal {direction} übersprungen: aktueller Preis {price:.5f} >= TP {take_profit:.5f}"
+                )
+                return False
+        else:
+            if price >= stop_price - eps:
+                logger.info(
+                    f"[{symbol}] Signal {direction} übersprungen: aktueller Preis {price:.5f} >= Stop {stop_price:.5f}"
+                )
+                return False
+            if price <= take_profit + eps:
+                logger.info(
+                    f"[{symbol}] Signal {direction} übersprungen: aktueller Preis {price:.5f} <= TP {take_profit:.5f}"
+                )
+                return False
+        return True
 
     def _scale_order_levels(self, signal: EntrySignal) -> Tuple[float, float]:
         entry = signal.entry_price
@@ -247,7 +290,7 @@ class OrderManager:
 
     def _process_execution_result(self, symbol: str, direction: Dir, result: dict) -> bool:
         retcode = result.get("retcode")
-        self._update_symbol_restrictions(symbol, direction, retcode)
+        self._update_symbol_restrictions(symbol, direction, result)
         if retcode in self.STOP_AFTER_RETCODES:
             return False
         return True
@@ -261,15 +304,16 @@ class OrderManager:
             return False
         return True
 
-    def _update_symbol_restrictions(self, symbol: str, direction: Dir, retcode: Optional[int]) -> None:
-        if retcode == 10016 and direction == Dir.DOWN:
+    def _update_symbol_restrictions(self, symbol: str, direction: Dir, result: dict) -> None:
+        retcode = result.get("retcode")
+        if retcode == self.LONG_ONLY_RETCODE and direction == Dir.DOWN:
             self._long_only_symbols.add(symbol)
             self._short_only_symbols.discard(symbol)
-            logger.warning(f"[{symbol}] Broker schränkt auf LONG ein (Retcode 10016)")
-        elif retcode == 10017 and direction == Dir.UP:
+            logger.warning(f"[{symbol}] Broker schränkt auf LONG ein (Retcode {retcode})")
+        elif retcode == self.SHORT_ONLY_RETCODE and direction == Dir.UP:
             self._short_only_symbols.add(symbol)
             self._long_only_symbols.discard(symbol)
-            logger.warning(f"[{symbol}] Broker schränkt auf SHORT ein (Retcode 10017)")
+            logger.warning(f"[{symbol}] Broker schränkt auf SHORT ein (Retcode {retcode})")
 
     def _refresh_account_balance(self) -> float:
         info = self.adapter.get_account_info()
