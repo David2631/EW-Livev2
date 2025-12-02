@@ -746,8 +746,9 @@ def main() -> None:
         if category_counts.empty:
             st.write("Keine Kategorien für diese Auswahl verfügbar.")
         else:
-            cat_summary = category_counts.value_counts().reset_index(name="Anzahl")
-            cat_summary.rename(columns={"index": "Kategorie"}, inplace=True)
+            cat_summary = (
+                category_counts.value_counts().rename_axis("Kategorie").reset_index(name="Anzahl")
+            )
             cat_summary["Kategorie"] = cat_summary["Kategorie"].astype(str)
             cat_chart = (
                 alt.Chart(cat_summary)
