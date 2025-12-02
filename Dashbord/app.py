@@ -742,7 +742,7 @@ def main() -> None:
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.subheader("Kategorie-Anteile")
-        category_counts = filtered[filtered["category"].notna()]["category"]
+        category_counts = filtered[filtered["category"].notna()]["category"].fillna("Unbekannt").astype(str)
         if category_counts.empty:
             st.write("Keine Kategorien für diese Auswahl verfügbar.")
         else:
