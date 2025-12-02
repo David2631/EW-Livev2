@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import secrets
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 import altair as alt
 import pandas as pd
+import pyotp
 import streamlit as st
 
 # Configure Streamlit page early so the layout matches the dashboard use case.
@@ -15,6 +19,9 @@ st.set_page_config(page_title="EW Live Dashboard", layout="wide")
 DEFAULT_LOG = Path(__file__).resolve().parents[1] / "logs" / "live_execution.txt"
 REMOTE_SEGMENT_DIR = Path(r"C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments")
 LOCAL_SEGMENT_DIR = Path(__file__).resolve().parents[1] / "logs" / "segments"
+AUTH_DB_PATH = Path(__file__).resolve().parents[1] / "auth.db"
+DEFAULT_ADMIN_EMAIL = "vossebuerger@fmmuc.com"
+DEFAULT_ADMIN_PASSWORD = "mimiKatze1!"
 TIMESTAMP_OFFSET_PATTERN = re.compile(r"([+-]\d{2})(\d{2})$")
 CR_PATTERN = re.compile(r"Chance/Risiko\s+([0-9.,]+)")
 MIN_FACTOR_PATTERN = re.compile(r"Mindestfaktor\s+([0-9.,]+)")
@@ -35,6 +42,103 @@ def _default_segment_dir() -> Path:
     except (OSError, PermissionError):
         LOCAL_SEGMENT_DIR.mkdir(parents=True, exist_ok=True)
         return LOCAL_SEGMENT_DIR
+
+
+def _get_auth_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(AUTH_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _ensure_auth_table() -> None:
+    with _get_auth_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                email TEXT PRIMARY KEY,
+                password_hash TEXT NOT NULL,
+                password_salt TEXT NOT NULL,
+                totp_secret TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+
+def _hash_password(password: str, salt: bytes) -> str:
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 200_000)
+    return digest.hex()
+
+
+def _create_user(email: str, password: str, is_admin: bool = False) -> str:
+    salt = secrets.token_bytes(16)
+    password_hash = _hash_password(password, salt)
+    totp_secret = pyotp.random_base32()
+    with _get_auth_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO users (email, password_hash, password_salt, totp_secret, is_admin, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                email,
+                password_hash,
+                salt.hex(),
+                totp_secret,
+                int(is_admin),
+                datetime.utcnow().isoformat(),
+            ),
+        )
+    return totp_secret
+
+
+def _get_user(email: str) -> Optional[sqlite3.Row]:
+    with _get_auth_connection() as conn:
+        row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    return row
+
+
+def _list_users() -> List[sqlite3.Row]:
+    with _get_auth_connection() as conn:
+        rows = conn.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
+    return rows
+
+
+def _reset_totp_secret(email: str) -> str:
+    secret = pyotp.random_base32()
+    with _get_auth_connection() as conn:
+        conn.execute("UPDATE users SET totp_secret = ? WHERE email = ?", (secret, email))
+    return secret
+
+
+def _ensure_default_admin() -> Optional[str]:
+    _ensure_auth_table()
+    existing = _get_user(DEFAULT_ADMIN_EMAIL)
+    if existing:
+        return None
+    return _create_user(DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, is_admin=True)
+
+
+def _verify_credentials(email: str, password: str, totp_code: str) -> tuple[bool, str, Optional[sqlite3.Row]]:
+    row = _get_user(email)
+    if not row:
+        return False, "Benutzer nicht gefunden.", None
+
+    salt = bytes.fromhex(row["password_salt"])
+    candidate_hash = _hash_password(password, salt)
+    if not secrets.compare_digest(candidate_hash, row["password_hash"]):
+        return False, "Ungültiges Passwort.", None
+
+    totp = pyotp.TOTP(row["totp_secret"])
+    if not totp.verify(totp_code, valid_window=1):
+        return False, "Ungültiger 2FA-Code.", None
+
+    return True, "", row
+
+
+def _format_totp_info(email: str, secret: str) -> str:
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(email, issuer_name="EW Live Dashboard")
+    return f"TOTP-Secret: {secret}\nProvisioning URI: {uri}"
 
 
 @st.cache_data(show_spinner=False)
@@ -237,6 +341,25 @@ def _timeline_frequency(span: pd.Timedelta) -> str:
 
 
 def main() -> None:
+    initial_totp_secret = _ensure_default_admin()
+    if initial_totp_secret and "initial_totp_secret" not in st.session_state:
+        st.session_state.initial_totp_secret = initial_totp_secret
+        st.session_state.initial_totp_secret_shown = False
+
+    st.session_state.setdefault("authenticated", False)
+    st.session_state.setdefault("user_email", "")
+    st.session_state.setdefault("is_admin", False)
+    st.session_state.setdefault("login_error", "")
+
+    if not st.session_state.authenticated:
+        _render_login_screen(st.session_state.get("initial_totp_secret"))
+        return
+
+    if st.sidebar.button("Abmelden"):
+        for key in ("authenticated", "user_email", "is_admin", "login_error"):
+            st.session_state[key] = False if key == "authenticated" else "" if key != "is_admin" else False
+        st.experimental_rerun()
+
     st.title("EW Live – Monitoring Dashboard")
     st.markdown(
         """
@@ -250,24 +373,24 @@ def main() -> None:
         st.warning("Bitte bestätige zuerst den Hinweis, um das Dashboard zu verwenden.")
         return
 
-    with st.sidebar:
-        st.header("Logquelle")
-        log_path = str(_default_segment_dir())
-        st.caption("Quelle ist fest auf den Segment-Ordner eingestellt.")
-        st.code(log_path, language="text")
-        st.caption("Alle verfügbaren Dateien im Ordner werden automatisch analysiert.")
-        max_files = None
-        force_refresh = st.button("Neu laden")
-
+    log_path = str(_default_segment_dir())
+    st.sidebar.header("Logquelle")
+    st.sidebar.caption("Quelle ist fest auf den Segment-Ordner eingestellt.")
+    st.sidebar.code(log_path, language="text")
+    st.sidebar.caption("Alle verfügbaren Dateien im Ordner werden automatisch analysiert.")
+    force_refresh = st.sidebar.button("Neu laden")
     if force_refresh:
         load_log_entries.clear()
 
+    if st.session_state.is_admin:
+        _render_admin_panel()
+
     try:
-        df = load_log_entries(log_path, max_files)
+        df = load_log_entries(log_path, None)
     except FileNotFoundError as exc:
         st.error(str(exc))
         return
-    except Exception as exc:  # pragma: no cover - defensive guard for Streamlit only
+    except Exception as exc:
         st.exception(exc)
         return
 
@@ -279,28 +402,27 @@ def main() -> None:
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
 
     timestamp_series = df["timestamp"].dropna()
-    with st.sidebar:
-        st.header("Filter")
-        date_selection = None
-        if not timestamp_series.empty:
-            min_date = timestamp_series.min().date()
-            max_date = timestamp_series.max().date()
-            date_selection = st.date_input(
-                "Zeitraum",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date,
-            )
-        symbol_filter = st.multiselect(
-            "Symbole filtern",
-            options=sorted(df["symbol"].dropna().unique()),
-            default=[],
+    st.sidebar.header("Filter")
+    date_selection = None
+    if not timestamp_series.empty:
+        min_date = timestamp_series.min().date()
+        max_date = timestamp_series.max().date()
+        date_selection = st.sidebar.date_input(
+            "Zeitraum",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
         )
-        category_filter = st.multiselect(
-            "Kategorien filtern",
-            options=sorted(df["category"].dropna().unique()),
-            default=[],
-        )
+    symbol_filter = st.sidebar.multiselect(
+        "Symbole filtern",
+        options=sorted(df["symbol"].dropna().unique()),
+        default=[],
+    )
+    category_filter = st.sidebar.multiselect(
+        "Kategorien filtern",
+        options=sorted(df["category"].dropna().unique()),
+        default=[],
+    )
 
     filtered = df.copy()
     if date_selection:
@@ -530,3 +652,75 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _render_login_screen(initial_secret: Optional[str]) -> None:
+    st.header("Gesicherter Zugriff")
+    st.caption("Bitte melde dich mit deinem @fmmuc.com-Account, Passwort und TOTP-Code an.")
+    if initial_secret and not st.session_state.get("initial_totp_secret_shown"):
+        st.warning(
+            "Initialer TOTP-Secret (nur einmal anzeigen):\n" + _format_totp_info(DEFAULT_ADMIN_EMAIL, initial_secret)
+        )
+        st.session_state.initial_totp_secret_shown = True
+
+    with st.form("login_form"):
+        email = st.text_input("E-Mail-Adresse", value=DEFAULT_ADMIN_EMAIL)
+        password = st.text_input("Passwort", type="password")
+        totp_code = st.text_input("2FA-Code", max_chars=6)
+        submitted = st.form_submit_button("Anmelden")
+
+    if submitted:
+        success, message, row = _verify_credentials(email, password, totp_code)
+        if success and row:
+            st.session_state.authenticated = True
+            st.session_state.user_email = email
+            st.session_state.is_admin = bool(row["is_admin"])
+            st.session_state.login_error = ""
+            st.experimental_rerun()
+        else:
+            st.session_state.login_error = message
+
+    if st.session_state.login_error:
+        st.error(st.session_state.login_error)
+
+
+def _render_admin_panel() -> None:
+    users = _list_users()
+    with st.sidebar.expander("Admin-Panel", expanded=True):
+        st.markdown("**Nutzerverwaltung**")
+        if users:
+            summary = pd.DataFrame(
+                [
+                    {
+                        "E-Mail": user["email"],
+                        "Admin": "Ja" if user["is_admin"] else "Nein",
+                        "Erstellt": user["created_at"],
+                    }
+                    for user in users
+                ]
+            )
+            st.dataframe(summary, height=180, hide_index=True)
+        else:
+            st.info("Noch keine Nutzer vorhanden.")
+
+        with st.form("new_user_form"):
+            st.subheader("Neuen Nutzer anlegen")
+            new_email = st.text_input("E-Mail", key="new_user_email")
+            new_password = st.text_input("Passwort", type="password", key="new_user_password")
+            is_admin = st.checkbox("Admin-Rechte", key="new_user_admin")
+            create_submitted = st.form_submit_button("Nutzer anlegen")
+        if create_submitted:
+            if not new_email or not new_password:
+                st.error("E-Mail und Passwort werden benötigt.")
+            else:
+                secret = _create_user(new_email, new_password, is_admin=is_admin)
+                st.success("Nutzer angelegt. Konfiguriere den TOTP-Code im Authenticator.")
+                st.code(_format_totp_info(new_email, secret), language="text")
+
+        if users:
+            st.markdown("---")
+            selected_user = st.selectbox("2FA zurücksetzen", options=[user["email"] for user in users], key="reset_user")
+            if st.button("TOTP regenerieren", key="reset_totp"):
+                new_secret = _reset_totp_secret(selected_user)
+                st.success("Neues TOTP-Secret erstellt.")
+                st.code(_format_totp_info(selected_user, new_secret), language="text")

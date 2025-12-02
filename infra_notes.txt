@@ -33,3 +33,9 @@ Operational Notes
 - Keep both Streamlit and cloudflared processes running (consider NSSM or Task Scheduler for services).
 - Cloudflare DNS/SSL handled entirely by the tunnel; no inbound ports need to be opened on the VPS.
 - Dashboard now automatically scans every segment file; no manual selection necessary.
+
+Authentication
+--------------
+- Default login: `vossebuerger@fmmuc.com` / `mimiKatze1!`
+- Initial TOTP secret (Google Authenticator/Proton): `H3OTZX3E66ETCN4XXMHHFLV4BLDET3D4` (enter this into your TOTP app, or view any user with the admin panel to reset it).
+- Admins can add users, reset TOTP secrets, and view provisioning URIs via the sidebar admin panel.
