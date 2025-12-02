@@ -252,13 +252,11 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Logquelle")
-        source_mode = st.radio("Quelle", ("Einzeldatei", "Segment-Ordner"), index=1)
-        if source_mode == "Einzeldatei":
-            log_path = st.text_input("Pfad zur Logdatei", value=str(DEFAULT_LOG))
-            max_files = None
-        else:
-            log_path = st.text_input("Pfad zum Log-Ordner", value=str(_default_segment_dir()))
-            max_files = st.number_input("Max. Dateien laden", min_value=1, max_value=200, value=25, step=5)
+        log_path = str(_default_segment_dir())
+        st.caption("Quelle ist fest auf den Segment-Ordner eingestellt.")
+        st.code(log_path, language="text")
+        st.caption("Alle verfügbaren Dateien im Ordner werden automatisch analysiert.")
+        max_files = None
         force_refresh = st.button("Neu laden")
 
     if force_refresh:

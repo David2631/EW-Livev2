@@ -1,0 +1,35 @@
+EW-Livev2 Deployment Notes (updated 2025-12-02)
+===============================================
+
+VPS Basics
+----------
+- Host OS: Windows Server VPS (Administrator account).
+- Public IPv4: 82.165.219.107 (also used for RDP on 3389/tcp).
+- Local project path: C:\Users\Administrator\Documents\EW-Livev2.1
+- Logs/segments consumed by dashboard: C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments
+
+Streamlit Dashboard
+-------------------
+- Command: `streamlit run Dashbord/app.py --server.port 8501 --server.address 127.0.0.1`
+- Runs bound to localhost; expose externally via Cloudflare Tunnel.
+- Ensure Python environment/venv is activated before launching.
+
+Cloudflare Tunnel
+-----------------
+- Domain: ewmt5.xyz
+- Tunnel name: ew-dashboard
+- Tunnel ID: 42882332-f481-46c5-b21f-9bb65491e9e6
+- Credentials file: C:\Users\Administrator\.cloudflared\42882332-f481-46c5-b21f-9bb65491e9e6.json
+- Startup command (interactive): `cloudflared tunnel --url http://127.0.0.1:8501 run ew-dashboard`
+- DNS: Cloudflare created a CNAME for ewmt5.xyz that routes to the tunnel (no direct A record required).
+
+Trading Service
+---------------
+- Launch command on VPS (ensure MT5 connected):
+  `python main.py --config live_config.json --log-file C:\Users\Administrator\Documents\EW-Livev2.1\logs\live_execution.log --log-segment-dir C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments`
+
+Operational Notes
+-----------------
+- Keep both Streamlit and cloudflared processes running (consider NSSM or Task Scheduler for services).
+- Cloudflare DNS/SSL handled entirely by the tunnel; no inbound ports need to be opened on the VPS.
+- Dashboard now automatically scans every segment file; no manual selection necessary.
