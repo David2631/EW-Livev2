@@ -37,5 +37,5 @@ Operational Notes
 Authentication
 --------------
 - Default login: `vossebuerger@fmmuc.com` / `mimiKatze1!`
-- Initial TOTP secret (Google Authenticator/Proton): `H3OTZX3E66ETCN4XXMHHFLV4BLDET3D4` (enter this into your TOTP app, or view any user with the admin panel to reset it).
-- Admins can add users, reset TOTP secrets, and view provisioning URIs via the sidebar admin panel.
+- Initial TOTP secret (Google Authenticator/Proton): `H3OTZX3E66ETCN4XXMHHFLV4BLDET3D4` — scan the QR code shown on the login screen or in the admin panel to register it.
+- Admins can add users, reset TOTP secrets, and view provisioning URIs / QR codes via the sidebar admin panel.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 import secrets
 import sqlite3
@@ -11,6 +12,7 @@ from typing import List, Optional
 import altair as alt
 import pandas as pd
 import pyotp
+import qrcode
 import streamlit as st
 
 # Configure Streamlit page early so the layout matches the dashboard use case.
@@ -22,6 +24,7 @@ LOCAL_SEGMENT_DIR = Path(__file__).resolve().parents[1] / "logs" / "segments"
 AUTH_DB_PATH = Path(__file__).resolve().parents[1] / "auth.db"
 DEFAULT_ADMIN_EMAIL = "vossebuerger@fmmuc.com"
 DEFAULT_ADMIN_PASSWORD = "mimiKatze1!"
+DEFAULT_ADMIN_TOTP_SECRET = "H3OTZX3E66ETCN4XXMHHFLV4BLDET3D4"
 TIMESTAMP_OFFSET_PATTERN = re.compile(r"([+-]\d{2})(\d{2})$")
 CR_PATTERN = re.compile(r"Chance/Risiko\s+([0-9.,]+)")
 MIN_FACTOR_PATTERN = re.compile(r"Mindestfaktor\s+([0-9.,]+)")
@@ -71,10 +74,11 @@ def _hash_password(password: str, salt: bytes) -> str:
     return digest.hex()
 
 
-def _create_user(email: str, password: str, is_admin: bool = False) -> str:
+def _create_user(email: str, password: str, is_admin: bool = False, totp_secret: Optional[str] = None) -> str:
     salt = secrets.token_bytes(16)
     password_hash = _hash_password(password, salt)
-    totp_secret = pyotp.random_base32()
+    if not totp_secret:
+        totp_secret = pyotp.random_base32()
     with _get_auth_connection() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO users (email, password_hash, password_salt, totp_secret, is_admin, created_at)"
@@ -115,7 +119,12 @@ def _ensure_default_admin() -> Optional[str]:
     existing = _get_user(DEFAULT_ADMIN_EMAIL)
     if existing:
         return None
-    return _create_user(DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, is_admin=True)
+    return _create_user(
+        DEFAULT_ADMIN_EMAIL,
+        DEFAULT_ADMIN_PASSWORD,
+        is_admin=True,
+        totp_secret=DEFAULT_ADMIN_TOTP_SECRET,
+    )
 
 
 def _verify_credentials(email: str, password: str, totp_code: str) -> tuple[bool, str, Optional[sqlite3.Row]]:
@@ -139,6 +148,16 @@ def _format_totp_info(email: str, secret: str) -> str:
     totp = pyotp.TOTP(secret)
     uri = totp.provisioning_uri(email, issuer_name="EW Live Dashboard")
     return f"TOTP-Secret: {secret}\nProvisioning URI: {uri}"
+
+
+def _render_totp_qr(secret: str, email: str) -> None:
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(email, issuer_name="EW Live Dashboard")
+    qr = qrcode.make(uri)
+    buffer = io.BytesIO()
+    qr.save(buffer, format="PNG")
+    buffer.seek(0)
+    st.image(buffer, caption="Diet einen QR-Code in deinen Authenticator", use_column_width=True)
 
 
 @st.cache_data(show_spinner=False)
@@ -347,6 +366,7 @@ def _render_login_screen(initial_secret: Optional[str]) -> None:
         st.warning(
             "Initialer TOTP-Secret (nur einmal anzeigen):\n" + _format_totp_info(DEFAULT_ADMIN_EMAIL, initial_secret)
         )
+        _render_totp_qr(initial_secret, DEFAULT_ADMIN_EMAIL)
         st.session_state.initial_totp_secret_shown = True
 
     with st.form("login_form"):
@@ -402,6 +422,7 @@ def _render_admin_panel() -> None:
                 secret = _create_user(new_email, new_password, is_admin=is_admin)
                 st.success("Nutzer angelegt. Konfiguriere den TOTP-Code im Authenticator.")
                 st.code(_format_totp_info(new_email, secret), language="text")
+                _render_totp_qr(secret, new_email)
 
         if users:
             st.markdown("---")
@@ -410,6 +431,7 @@ def _render_admin_panel() -> None:
                 new_secret = _reset_totp_secret(selected_user)
                 st.success("Neues TOTP-Secret erstellt.")
                 st.code(_format_totp_info(selected_user, new_secret), language="text")
+                _render_totp_qr(new_secret, selected_user)
 
 
 def main() -> None:
