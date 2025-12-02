@@ -350,7 +350,7 @@ def _render_login_screen(initial_secret: Optional[str]) -> None:
         st.session_state.initial_totp_secret_shown = True
 
     with st.form("login_form"):
-        email = st.text_input("E-Mail-Adresse", value=DEFAULT_ADMIN_EMAIL)
+        email = st.text_input("E-Mail-Adresse")
         password = st.text_input("Passwort", type="password")
         totp_code = st.text_input("2FA-Code", max_chars=6)
         submitted = st.form_submit_button("Anmelden")
