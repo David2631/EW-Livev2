@@ -44,56 +44,6 @@ ENTRY_TIME_PATTERN = re.compile(r"entry_time=Timestamp\('(?P<entry_time>[^']+)'\
 ENTRY_DIRECTION_PATTERN = re.compile(r"direction=<Dir\.\w+:\s*'(?P<direction>[A-Z]+)'\>")
 
 
-def _apply_dark_theme() -> None:
-    css = """
-    <style>
-    :root {
-        color-scheme: dark;
-    }
-    body {
-        background: #03040a;
-        color: #f6f7fb;
-    }
-    .stApp, .main .block-container {
-        background-color: #03040a;
-        color: #f6f7fb;
-    }
-    .stSidebar {
-        background-color: #0a0c16;
-        color: #f6f7fb;
-    }
-    .stMetric > div {
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(11, 12, 17, 0.7));
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
-        transition: transform 0.35s ease, box-shadow 0.35s ease;
-    }
-    .stMetric > div:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
-    }
-    .animated-panel {
-        animation: fadeIn 0.7s ease-out;
-        border-radius: 14px;
-    }
-    .chart-panel {
-        padding: 12px 16px;
-        border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        background: rgba(15, 17, 25, 0.9);
-    }
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(12px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
-
-
-_apply_dark_theme()
-
-
 def _default_segment_dir() -> Path:
     try:
         REMOTE_SEGMENT_DIR.mkdir(parents=True, exist_ok=True)
@@ -738,7 +688,7 @@ def main() -> None:
                 step=6,
                 key="insights_hours",
             )
-            window_start = pd.Timestamp.utcnow().tz_localize("UTC") - pd.Timedelta(hours=hours_back)
+            window_start = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=hours_back)
             detail_source = timeline_source[timeline_source["timestamp"] >= window_start]
             if detail_source.empty:
                 st.warning("Für den gewählten Zeitraum liegen keine Einträge vor.")
