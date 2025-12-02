@@ -19,7 +19,7 @@ from live_core.mt5_adapter import MetaTrader5Adapter
 from live_core.signals import SignalEngine
 
 logger = logging.getLogger("ew_live")
-DEFAULT_REMOTE_SEGMENTS = Path(r"C:\Users\Administrator\Documents\EW-Livev2.0\logs\segments")
+DEFAULT_REMOTE_SEGMENTS = Path(r"C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments")
 
 
 class SegmentBufferHandler(logging.Handler):
@@ -102,7 +102,7 @@ def parse_args() -> argparse.Namespace:
         "--log-segment-dir",
         help=(
             "Optionaler Ordner für segmentierte Logs (Standard: C:\\Users\\Administrator\\Documents"
-            "\\EW-Livev2.0\\logs\\segments, sonst <log>/segments)"
+            "\\EW-Livev2.1\\logs\\segments, sonst <log>/segments)"
         ),
     )
     parser.add_argument(

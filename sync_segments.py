@@ -5,7 +5,7 @@ import argparse
 import shutil
 from pathlib import Path
 
-DEFAULT_SOURCE = Path(r"C:\Users\Administrator\Documents\EW-Livev2.0\logs\segments")
+DEFAULT_SOURCE = Path(r"C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments")
 DEFAULT_DEST = Path(__file__).resolve().parent / "logs" / "segments"
 
 

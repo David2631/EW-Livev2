@@ -13,7 +13,7 @@ import streamlit as st
 st.set_page_config(page_title="EW Live Dashboard", layout="wide")
 
 DEFAULT_LOG = Path(__file__).resolve().parents[1] / "logs" / "live_execution.txt"
-REMOTE_SEGMENT_DIR = Path(r"C:\Users\Administrator\Documents\EW-Livev2.0\logs\segments")
+REMOTE_SEGMENT_DIR = Path(r"C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments")
 LOCAL_SEGMENT_DIR = Path(__file__).resolve().parents[1] / "logs" / "segments"
 TIMESTAMP_OFFSET_PATTERN = re.compile(r"([+-]\d{2})(\d{2})$")
 CR_PATTERN = re.compile(r"Chance/Risiko\s+([0-9.,]+)")
