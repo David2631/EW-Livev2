@@ -43,7 +43,7 @@ class LiveConfig:
     stop_loss_multiplier: float = 1.5
     take_profit_multiplier: float = 1.0
     min_stop_distance_pct: float = 0.0008
-    trade_cooldown_minutes: int = 10
+    trade_cooldown_minutes: int = 30
     max_trades_per_symbol_per_hour: int = 2
     min_profit_factor: float = 1.2
     max_gross_exposure_pct: float = 0.01

@@ -103,13 +103,6 @@ class OrderManager:
                     f"Mindestfaktor {self.cfg.min_profit_factor:.2f}"
                 )
                 continue
-            stop_ok, required, actual = self._validate_stop_distance(signal.entry_price, stop_price)
-            if not stop_ok:
-                logger.info(
-                    f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Stop-Distanz {actual:.5f} < "
-                    f"Mindestabstand {required:.5f}"
-                )
-                continue
             current_price = self._current_price(symbol, signal.direction)
             if current_price is None:
                 logger.warning(f"[{symbol}] Kein aktueller Preis verfügbar -> Signal übersprungen")
