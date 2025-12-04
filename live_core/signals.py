@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -61,6 +61,35 @@ class EntrySignal:
     setup: str
     entry_zone: Optional[Tuple[float, float]] = None
     entry_tf: str = "H1"
+
+
+def _resolve_idx_value(value: Any, default: int = 0) -> int:
+    if isinstance(value, (pd.Index, pd.Series)):
+        arr = value.to_numpy()
+    elif isinstance(value, (list, tuple, np.ndarray)):
+        arr = np.asarray(value)
+    else:
+        arr = None
+    if arr is not None:
+        if arr.size == 0:
+            return default
+        if arr.dtype == bool:
+            true_pos = np.nonzero(arr)[0]
+            return int(true_pos[0]) if true_pos.size > 0 else default
+        if arr.size == 1:
+            return int(arr.item())
+        return int(arr[-1])
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _bounded_index(raw_idx: Any, max_idx: int) -> int:
+    max_idx = max(0, max_idx)
+    resolved = _resolve_idx_value(raw_idx)
+    candidate = max(0, resolved + 1)
+    return min(candidate, max_idx)
 
 
 class ElliottEngine:
@@ -312,7 +341,7 @@ class SignalEngine:
         setups: List[Setup] = []
         for impulse in impulses:
             p0, p1, p2, p3, p4, _p5 = impulse.points
-            idx_entry = min(p2.idx + 1, len(df) - 1)
+            idx_entry = _bounded_index(p2.idx, len(df) - 1)
             entry_time = df.iloc[idx_entry]["date"]
             if impulse.direction == Dir.UP:
                 zone = self.h1_engine.fib_zone(p0.price, p1.price, Dir.UP, self.cfg.entry_zone_w3)
@@ -325,7 +354,7 @@ class SignalEngine:
                 tp2 = self.h1_engine.fib_ext(p0.price, p1.price, Dir.DOWN, self.cfg.tp2)
                 setups.append(Setup("W3", Dir.DOWN, entry_time, idx_entry, zone, p0.price, tp1, tp2))
             if self.cfg.use_w5:
-                idx_w5 = min(p4.idx + 1, len(df) - 1)
+                idx_w5 = _bounded_index(p4.idx, len(df) - 1)
                 entry_time_w5 = df.iloc[idx_w5]["date"]
                 zone = self.h1_engine.fib_zone(p2.price, p3.price, impulse.direction, self.cfg.entry_zone_w5)
                 tp1 = self.h1_engine.fib_ext(p2.price, p3.price, impulse.direction, self.cfg.tp1)
@@ -333,7 +362,7 @@ class SignalEngine:
                 setups.append(Setup("W5", impulse.direction, entry_time_w5, idx_w5, zone, p2.price, tp1, tp2))
         for abc in abcs:
             a0, a1, b1, c1 = abc.points
-            idx_entry = min(b1.idx + 1, len(df) - 1)
+            idx_entry = _bounded_index(b1.idx, len(df) - 1)
             entry_time = df.iloc[idx_entry]["date"]
             zone = self.h1_engine.fib_zone(a0.price, a1.price, abc.direction, self.cfg.entry_zone_c)
             tp1 = self.h1_engine.fib_ext(a0.price, a1.price, abc.direction, self.cfg.tp1)
