@@ -120,6 +120,11 @@ class OrderManager:
             volume, risk_amount, risk_per_lot, stop_distance = self._calculate_volume(
                 symbol, signal, info, stop_price, execution_price
             )
+            if volume <= 0:
+                logger.info(
+                    f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Exposure-Limit lässt kein Volumen zu"
+                )
+                continue
             trade_exposure = self._exposure_value(symbol, volume, execution_price, info)
             if not self._within_exposure_limit(symbol, trade_exposure):
                 continue
@@ -585,11 +590,56 @@ class OrderManager:
             lots *= self.cfg.size_short_factor
         lots = max(self.cfg.min_lot, lots)
         lots = min(lots, self.cfg.max_lot)
+        if self.cfg.max_gross_exposure_pct > 0:
+            remaining_exposure = self._exposure_limit_allowance(balance)
+            lots = self._cap_volume_to_remaining(symbol, info, entry_price, lots, remaining_exposure)
+            if lots <= 0:
+                return 0.0, 0.0, risk_per_lot, stop_distance
         lots = self._align_with_symbol_constraints(symbol, info, lots)
+        risk_amount = risk_per_lot * lots
         return lots, risk_amount, risk_per_lot, stop_distance
 
+    def _exposure_limit_allowance(self, balance: float) -> float:
+        limit_pct = max(self.cfg.max_gross_exposure_pct, 0.0)
+        if limit_pct <= 0 or balance <= 0:
+            return 0.0
+        limit_value = balance * limit_pct
+        current = self._current_gross_exposure()
+        remaining = limit_value - current
+        return max(remaining, 0.0)
+
+    def _cap_volume_to_remaining(
+        self, symbol: str, info: Optional[Any], entry_price: float, volume: float, remaining: float
+    ) -> float:
+        if remaining <= 0 or volume <= 0:
+            logger.info(f"[{symbol}] Exponierungslimit erreicht; Volumen auf 0 reduziert.")
+            return 0.0
+        desired_exposure = self._exposure_value(symbol, volume, entry_price, info)
+        if desired_exposure <= remaining:
+            return volume
+        factor = remaining / desired_exposure if desired_exposure > 0 else 0.0
+        scaled_volume = max(self.cfg.min_lot, volume * factor)
+        scaled_volume = self._align_with_symbol_constraints(symbol, info, scaled_volume, log_changes=False)
+        step = getattr(info, "volume_step", None) or 0.01
+        for _ in range(40):
+            exposure = self._exposure_value(symbol, scaled_volume, entry_price, info)
+            if exposure <= remaining:
+                return scaled_volume
+            scaled_volume = max(self.cfg.min_lot, scaled_volume - step)
+            scaled_volume = self._align_with_symbol_constraints(symbol, info, scaled_volume, log_changes=False)
+            if scaled_volume <= 0:
+                break
+        final_exposure = self._exposure_value(symbol, scaled_volume, entry_price, info)
+        if final_exposure <= remaining and scaled_volume > 0:
+            logger.info(
+                f"[{symbol}] Volumen reduziert auf {scaled_volume:.3f}, um das Exponierungslimit von {remaining:.2f} einzuhalten."
+            )
+            return scaled_volume
+        logger.info(f"[{symbol}] Exponierungslimit erreicht; Volumen auf 0 reduziert.")
+        return 0.0
+
     def _align_with_symbol_constraints(
-        self, symbol: str, info: Optional[Any], volume: float
+        self, symbol: str, info: Optional[Any], volume: float, log_changes: bool = True
     ) -> float:
         min_vol = self.cfg.min_lot
         max_vol = self.cfg.max_lot
@@ -616,7 +666,7 @@ class OrderManager:
                 normalized = min_vol
             if max_vol and normalized > max_vol:
                 normalized = max_vol
-        if abs(normalized - volume) > 1e-9:
+        if log_changes and abs(normalized - volume) > 1e-9:
             logger.info(
                 f"[{symbol}] Volume an Symbol-Limits angepasst: {normalized:.3f} (min={min_vol:.3f}, max={max_vol:.3f}, step={step:.5f})"
             )

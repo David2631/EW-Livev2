@@ -1,0 +1,188 @@
+Symbol;Beschreibung;Gruppe;Basiswährung;Gewinnwährung;Dezimalstellen;Kontraktgröße;Spread;Handel_erlaubt
+EURUSD;Euro vs US Dollar;Forex\Majors\EURUSD;EUR;USD;5;100000.0;0;Ja
+GBPUSD;Great Britain Pound vs US Dollar;Forex\Majors\GBPUSD;GBP;USD;5;100000.0;2;Ja
+USDCHF;US Dollar vs Swiss Franc;Forex\Majors\USDCHF;USD;CHF;5;100000.0;2;Ja
+USDJPY;US Dollar vs Japanese Yen;Forex\Majors\USDJPY;USD;JPY;3;100000.0;2;Ja
+USDCAD;US Dollar vs Canadian Dollar;Forex\Majors\USDCAD;USD;CAD;5;100000.0;3;Ja
+AUDUSD;Australian Dollar vs US Dollar;Forex\Majors\AUDUSD;AUD;USD;5;100000.0;0;Ja
+AUDCAD;Australian Dollar vs Canadian Dollar;Forex\Minors\AUDCAD;AUD;CAD;5;100000.0;3;Ja
+AUDCHF;Australian Dollar vs Swiss Franc;Forex\Minors\AUDCHF;AUD;CHF;5;100000.0;1;Ja
+AUDJPY;Australian Dollar vs Japanese Yen;Forex\Minors\AUDJPY;AUD;JPY;3;100000.0;2;Ja
+CHFJPY;Swiss Franc vs Japanese Yen;Forex\Minors\CHFJPY;CHF;JPY;3;100000.0;4;Ja
+EURGBP;Euro vs Great Britain Pound;Forex\Minors\EURGBP;EUR;GBP;5;100000.0;1;Ja
+EURAUD;Euro vs Australian Dollar;Forex\Minors\EURAUD;EUR;AUD;5;100000.0;2;Ja
+EURCHF;Euro vs Swiss Franc;Forex\Minors\EURCHF;EUR;CHF;5;100000.0;4;Ja
+EURCAD;Euro vs Canadian Dollar;Forex\Minors\EURCAD;EUR;CAD;5;100000.0;4;Ja
+GBPCHF;Great Britain Pound vs Swiss Franc;Forex\Minors\GBPCHF;GBP;CHF;5;100000.0;2;Ja
+CADCHF;Canadian Dollar vs Swiss Franc;Forex\Minors\CADCHF;CAD;CHF;5;100000.0;2;Ja
+CADJPY;Canadian Dollar vs Japanese Yen;Forex\Minors\CADJPY;CAD;JPY;3;100000.0;4;Ja
+GBPAUD;Great Britain Pound vs Australian Dollar;Forex\Minors\GBPAUD;GBP;AUD;5;100000.0;2;Ja
+GBPCAD;Great Britain Pound vs Canadian Dollar;Forex\Minors\GBPCAD;GBP;CAD;5;100000.0;4;Ja
+NZDCHF;New Zealand Dollar vs Swiss Franc;Forex\Minors\NZDCHF;NZD;CHF;5;100000.0;3;Ja
+NZDUSD;New Zealand Dollar vs US Dollar;Forex\Minors\NZDUSD;NZD;USD;5;100000.0;3;Ja
+USDRUB;US Dollar vs Russian Ruble;Forex\Exotics\USDRUB;USD;RUB;5;100000.0;0;Ja
+XBRUSD;Brent Oil vs US Dollar;Commodities\Energies\Energies Spot\XBRUSD;XBR;USD;2;100.0;1;Ja
+XTIUSD;Crude Oil vs US Dollar;Commodities\Energies\Energies Spot\XTIUSD;XTI;USD;2;100.0;2;Ja
+CMCSA.NAS;Comcast Corp A CFD;Stock CFD's\Nasdaq\CMCSA.NAS;USD;USD;2;1.0;1;Ja
+CME.NAS;CME Group CFD;Stock CFD's\Nasdaq\CME.NAS;USD;USD;2;1.0;4;Ja
+CRON.NAS;Cronos Group Inc CFD;Stock CFD's\Nasdaq\CRON.NAS;USD;USD;2;1.0;1;Ja
+CSCO.NAS;Cisco Systems CFD;Stock CFD's\Nasdaq\CSCO.NAS;USD;USD;2;1.0;1;Ja
+CTSH.NAS;Cognizant Technology Solutions CFD;Stock CFD's\Nasdaq\CTSH.NAS;USD;USD;2;1.0;2;Ja
+EA.NAS;Electronic Arts CFD;Stock CFD's\Nasdaq\EA.NAS;USD;USD;2;1.0;1;Ja
+EBAY.NAS;Ebay CFD;Stock CFD's\Nasdaq\EBAY.NAS;USD;USD;2;1.0;2;Ja
+FOX.NAS;Fox Corp - Class B CFD;Stock CFD's\Nasdaq\FOX.NAS;USD;USD;2;1.0;1;Ja
+FOXA.NAS;Fox Corp - Class A CFD;Stock CFD's\Nasdaq\FOXA.NAS;USD;USD;2;1.0;1;Ja
+GOOG.NAS;Alphabet Inc C CFD;Stock CFD's\Nasdaq\GOOG.NAS;USD;USD;2;1.0;3;Ja
+INTC.NAS;Intel Corp CFD;Stock CFD's\Nasdaq\INTC.NAS;USD;USD;2;1.0;1;Ja
+KHC.NAS;Kraft Heinz Co CFD;Stock CFD's\Nasdaq\KHC.NAS;USD;USD;2;1.0;1;Ja
+MAR.NAS;Marriott Intl CFD;Stock CFD's\Nasdaq\MAR.NAS;USD;USD;2;1.0;3;Ja
+MDLZ.NAS;Mondelez International CFD;Stock CFD's\Nasdaq\MDLZ.NAS;USD;USD;2;1.0;1;Ja
+MSFT.NAS;Microsoft Corp CFD;Stock CFD's\Nasdaq\MSFT.NAS;USD;USD;2;1.0;2;Ja
+NVDA.NAS;Nvidia Corp CFD;Stock CFD's\Nasdaq\NVDA.NAS;USD;USD;2;1.0;1;Ja
+PEP.NAS;Pepsico CFD;Stock CFD's\Nasdaq\PEP.NAS;USD;USD;2;1.0;1;Ja
+PYPL.NAS;Paypal Holdings Inc CFD;Stock CFD's\Nasdaq\PYPL.NAS;USD;USD;2;1.0;1;Ja
+QCOM.NAS;Qualcomm CFD;Stock CFD's\Nasdaq\QCOM.NAS;USD;USD;2;1.0;3;Ja
+SBUX.NAS;Starbucks Corp CFD;Stock CFD's\Nasdaq\SBUX.NAS;USD;USD;2;1.0;1;Ja
+TLRY.NAS;Tilray Inc CFD;Stock CFD's\Nasdaq\TLRY.NAS;USD;USD;2;1.0;1;Ja
+TMUS.NAS;T-Mobile US CFD;Stock CFD's\Nasdaq\TMUS.NAS;USD;USD;2;1.0;3;Ja
+TSLA.NAS;Tesla Motors CFD;Stock CFD's\Nasdaq\TSLA.NAS;USD;USD;2;1.0;2;Ja
+TXN.NAS;Texas Instruments CFD;Stock CFD's\Nasdaq\TXN.NAS;USD;USD;2;1.0;2;Ja
+ACB.NYSE;Aurora Cannabis Inc. CFD;Stock CFD's\NYSE\ACB.NYSE;USD;USD;2;1.0;1;Ja
+CGC.NYSE;Canopy Growth Corp. CFD;Stock CFD's\NYSE\CGC.NYSE;USD;USD;2;1.0;1;Ja
+CVS.NYSE;CVS Health Corp CFD;Stock CFD's\NYSE\CVS.NYSE;USD;USD;2;1.0;1;Ja
+CVX.NYSE;Chevron Corp CFD;Stock CFD's\NYSE\CVX.NYSE;USD;USD;2;1.0;1;Ja
+DD.NYSE;DuPont de Nemours Inc CFD;Stock CFD's\NYSE\DD.NYSE;USD;USD;2;1.0;1;Ja
+DIS.NYSE;Walt Disney Co CFD;Stock CFD's\NYSE\DIS.NYSE;USD;USD;2;1.0;1;Ja
+DWDP.NYSE;DowDuPont Inc CFD;Stock CFD's\NYSE\DWDP.NYSE;USD;USD;2;1.0;1;Ja
+JNJ.NYSE;Johnson and Johnson CFD;Stock CFD's\NYSE\JNJ.NYSE;USD;USD;2;1.0;1;Ja
+JPM.NYSE;J.P. Morgan Chase CFD;Stock CFD's\NYSE\JPM.NYSE;USD;USD;2;1.0;2;Ja
+MMM.NYSE;3M Company CFD;Stock CFD's\NYSE\MMM.NYSE;USD;USD;2;1.0;3;Ja
+MO.NYSE;Altria Group Inc CFD;Stock CFD's\NYSE\MO.NYSE;USD;USD;2;1.0;1;Ja
+MS.NYSE;Morgan Stanley CFD;Stock CFD's\NYSE\MS.NYSE;USD;USD;2;1.0;3;Ja
+NKE.NYSE;Nike CL B CFD;Stock CFD's\NYSE\NKE.NYSE;USD;USD;2;1.0;1;Ja
+ORCL.NYSE;Oracle CFD;Stock CFD's\NYSE\ORCL.NYSE;USD;USD;2;1.0;2;Ja
+PFE.NYSE;Pfizer CFD;Stock CFD's\NYSE\PFE.NYSE;USD;USD;2;1.0;1;Ja
+PG.NYSE;Procter and Gamble CFD;Stock CFD's\NYSE\PG.NYSE;USD;USD;2;1.0;1;Ja
+PM.NYSE;Philip Morris CFD;Stock CFD's\NYSE\PM.NYSE;USD;USD;2;1.0;2;Ja
+SLB.NYSE;Schlumberger CFD;Stock CFD's\NYSE\SLB.NYSE;USD;USD;2;1.0;1;Ja
+T.NYSE;AT and T CFD;Stock CFD's\NYSE\T.NYSE;USD;USD;2;1.0;1;Ja
+TWX.NYSE;Time Warner CFD;Stock CFD's\NYSE\TWX.NYSE;USD;USD;2;1.0;1;Ja
+UNP.NYSE;Union Pacific Cp CFD;Stock CFD's\NYSE\UNP.NYSE;USD;USD;2;1.0;1;Ja
+UPS.NYSE;United Parcel Services CFD;Stock CFD's\NYSE\UPS.NYSE;USD;USD;2;1.0;2;Ja
+USB.NYSE;US Bancorp CFD;Stock CFD's\NYSE\USB.NYSE;USD;USD;2;1.0;1;Ja
+V.NYSE;Visa CFD;Stock CFD's\NYSE\V.NYSE;USD;USD;2;1.0;3;Ja
+VZ.NYSE;Verizon Communications Inc CFD;Stock CFD's\NYSE\VZ.NYSE;USD;USD;2;1.0;1;Ja
+WFC.NYSE;Wells Fargo and Co CFD;Stock CFD's\NYSE\WFC.NYSE;USD;USD;2;1.0;1;Ja
+WMT.NYSE;Wal-Mart Stores CFD;Stock CFD's\NYSE\WMT.NYSE;USD;USD;2;1.0;1;Ja
+XOM.NYSE;Exxon Mobil CFD;Stock CFD's\NYSE\XOM.NYSE;USD;USD;2;1.0;1;Ja
+DEO.NYSE;Diageo plc CFD;Stock CFD's\NYSE\DEO.NYSE;USD;USD;2;1.0;4;Ja
+NEE.NYSE;NextEra Energy, Inc. CFD;Stock CFD's\NYSE\NEE.NYSE;USD;USD;2;1.0;1;Ja
+BRK-B.NYSE;Berkshire Hathaway Inc - B Shares CFD;Stock CFD's\NYSE\BRK-B.NYSE;USD;USD;2;1.0;5;Ja
+LYFT.NAS;Lyft, Inc. CFD;Stock CFD's\Nasdaq\LYFT.NAS;USD;USD;2;1.0;1;Ja
+UBER.NYSE;Uber Technologies Inc CFD;Stock CFD's\NYSE\UBER.NYSE;USD;USD;2;1.0;1;Ja
+PINS.NYSE;Pinterest Inc CFD;Stock CFD's\NYSE\PINS.NYSE;USD;USD;2;1.0;1;Ja
+BMW.ETR;Bayerische Motoren Werke AG (Preference);Stock CFD's\EU\ETR\BMW.ETR;EUR;EUR;2;1.0;4;Ja
+BTA.LSE;BT Group;Stock CFD's\UK\LSE\BTA.LSE;GBP;GBP;4;1.0;5;Ja
+CO.PAR;Casino Guichard Perrachon;Stock CFD's\EU\PAR\CO.PAR;EUR;EUR;3;1.0;3;Ja
+PFC.LSE;Petrofac;Stock CFD's\UK\LSE\PFC.LSE;GBP;GBP;4;1.0;1;Ja
+CPRT.NAS;Copart Inc CFD;Stock CFD's\Nasdaq\CPRT.NAS;USD;USD;2;1.0;1;Ja
+BFB.NYSE;Brown-Forman Corp.;Stock CFD's\NYSE\BFB.NYSE;USD;USD;3;1.0;0;Ja
+DXCM.NAS;DexCom;Stock CFD's\Nasdaq\DXCM.NAS;USD;USD;2;1.0;1;Ja
+FTNT.NAS;Fortinet;Stock CFD's\Nasdaq\FTNT.NAS;USD;USD;2;1.0;1;Ja
+IPGP.NAS;IPG Photonics Corp.;Stock CFD's\Nasdaq\IPGP.NAS;USD;USD;2;1.0;3;Ja
+LKQ.NAS;LKQ Corporation;Stock CFD's\Nasdaq\LKQ.NAS;USD;USD;2;1.0;2;Ja
+QRVO.NAS;Qorvo;Stock CFD's\Nasdaq\QRVO.NAS;USD;USD;2;1.0;2;Ja
+RDWR.NAS;Radware Ltd.;Stock CFD's\Nasdaq\RDWR.NAS;USD;USD;2;1.0;5;Ja
+SWKS.NAS;Skyworks Solutions;Stock CFD's\Nasdaq\SWKS.NAS;USD;USD;2;1.0;2;Ja
+TSCO.NAS;Tractor Supply Company;Stock CFD's\Nasdaq\TSCO.NAS;USD;USD;2;1.0;1;Ja
+TRMB.NAS;Trimble Inc.;Stock CFD's\Nasdaq\TRMB.NAS;USD;USD;2;1.0;4;Ja
+BMRN.NAS;BioMarin Pharmaceutical Inc. Common Stock;Stock CFD's\Nasdaq\BMRN.NAS;USD;USD;2;1.0;1;Ja
+CG.NAS;The Carlyle Group Inc. Common Stock;Stock CFD's\Nasdaq\CG.NAS;USD;USD;2;1.0;1;Ja
+CGNX.NAS;Cognex Corporation Common Stock;Stock CFD's\Nasdaq\CGNX.NAS;USD;USD;2;1.0;2;Ja
+CSGP.NAS;CoStar Group Inc. Common Stock;Stock CFD's\Nasdaq\CSGP.NAS;USD;USD;2;1.0;3;Ja
+ENTG.NAS;Entegris Inc. Common Stock;Stock CFD's\Nasdaq\ENTG.NAS;USD;USD;2;1.0;2;Ja
+IBKR.NAS;Interactive Brokers Group Inc. Class A Common Stock;Stock CFD's\Nasdaq\IBKR.NAS;USD;USD;2;1.0;1;Ja
+ON.NAS;ON Semiconductor Corporation Common Stock;Stock CFD's\Nasdaq\ON.NAS;USD;USD;2;1.0;1;Ja
+PEGA.NAS;Pegasystems Inc. Common Stock;Stock CFD's\Nasdaq\PEGA.NAS;USD;USD;2;1.0;5;Ja
+PENN.NAS;Penn National Gaming Inc. Common Stock;Stock CFD's\Nasdaq\PENN.NAS;USD;USD;2;1.0;1;Ja
+TECH.NAS;Bio-Techne Corp Common Stock;Stock CFD's\Nasdaq\TECH.NAS;USD;USD;2;1.0;4;Ja
+WMG.NAS;Warner Music Group Corp. Class A Common Stock;Stock CFD's\Nasdaq\WMG.NAS;USD;USD;2;1.0;1;Ja
+Z.NAS;Zillow Group Inc. Class C Capital Stock;Stock CFD's\Nasdaq\Z.NAS;USD;USD;2;1.0;1;Ja
+AMRX.NYSE;Amneal Pharmaceuticals;Stock CFD's\NYSE\AMRX.NYSE;USD;USD;2;1.0;1;Ja
+UNFI.NYSE;United Natural Foods Inc;Stock CFD's\NYSE\UNFI.NYSE;USD;USD;2;1.0;2;Ja
+CNMD.NYSE;CONMED Corp;Stock CFD's\NYSE\CNMD.NYSE;USD;USD;2;1.0;3;Ja
+DECK.NYSE;Deckers Outdoor Corp;Stock CFD's\NYSE\DECK.NYSE;USD;USD;2;1.0;2;Ja
+NBEV.NAS;New Age Beverages Corporation;Stock CFD's\Nasdaq\NBEV.NAS;USD;USD;3;1.0;1;Ja
+VRAY.NAS;ViewRay Inc;Stock CFD's\Nasdaq\VRAY.NAS;USD;USD;3;1.0;1;Ja
+NCMI.NAS;National CineMedia Inc;Stock CFD's\Nasdaq\NCMI.NAS;USD;USD;2;1.0;1;Ja
+PSEC.NAS;Prospect Capital Corp;Stock CFD's\Nasdaq\PSEC.NAS;USD;USD;2;1.0;1;Ja
+HLIT.NAS;Harmonic Inc;Stock CFD's\Nasdaq\HLIT.NAS;USD;USD;2;1.0;1;Ja
+INSG.NAS;Inseego Corp.;Stock CFD's\Nasdaq\INSG.NAS;USD;USD;2;1.0;5;Ja
+NMRK.NAS;Newmark Group Inc - Class A;Stock CFD's\Nasdaq\NMRK.NAS;USD;USD;2;1.0;3;Ja
+OSUR.NAS;OraSure Technologies Inc;Stock CFD's\Nasdaq\OSUR.NAS;USD;USD;2;1.0;1;Ja
+GLNG.NAS;Golar LNG Ltd;Stock CFD's\Nasdaq\GLNG.NAS;USD;USD;2;1.0;3;Ja
+VRA.NAS;Vera Bradley Inc;Stock CFD's\Nasdaq\VRA.NAS;USD;USD;2;1.0;2;Ja
+CAMP.NAS;CalAmp Corp;Stock CFD's\Nasdaq\CAMP.NAS;USD;USD;3;1.0;0;Ja
+SGMO.NAS;Sangamo Biosciences Inc;Stock CFD's\Nasdaq\SGMO.NAS;USD;USD;2;1.0;1;Ja
+CLNE.NAS;Clean Energy Fuels Corp;Stock CFD's\Nasdaq\CLNE.NAS;USD;USD;2;1.0;1;Ja
+SSRM.NAS;Silver Standard Resources Inc;Stock CFD's\Nasdaq\SSRM.NAS;USD;USD;2;1.0;1;Ja
+ROIC.NAS;Retail Opportunity Investments;Stock CFD's\Nasdaq\ROIC.NAS;USD;USD;2;1.0;1;Ja
+AGNC.NAS;AGNC Investment Corp;Stock CFD's\Nasdaq\AGNC.NAS;USD;USD;2;1.0;1;Ja
+SWBI.NAS;Smith & Wesson Brands Inc;Stock CFD's\Nasdaq\SWBI.NAS;USD;USD;2;1.0;1;Ja
+SBRA.NAS;Sabra Health Care REIT Inc;Stock CFD's\Nasdaq\SBRA.NAS;USD;USD;2;1.0;1;Ja
+MLCO.NAS;Melco Resorts & Entertainment Ltd - ADR;Stock CFD's\Nasdaq\MLCO.NAS;USD;USD;2;1.0;1;Ja
+JBLU.NAS;JetBlue Airways Corp;Stock CFD's\Nasdaq\JBLU.NAS;USD;USD;2;1.0;1;Ja
+CLDX.NAS;Celldex Therapeutics Inc;Stock CFD's\Nasdaq\CLDX.NAS;USD;USD;2;1.0;1;Ja
+EXEL.NAS;Exelixis Inc;Stock CFD's\Nasdaq\EXEL.NAS;USD;USD;2;1.0;5;Ja
+LBTYK.NAS;Liberty Global PLC Class C;Stock CFD's\Nasdaq\LBTYK.NAS;USD;USD;2;1.0;1;Ja
+NTNX.NAS;Nutanix Inc;Stock CFD's\Nasdaq\NTNX.NAS;USD;USD;2;1.0;1;Ja
+SBGI.NAS;Sinclair Broadcast Group Inc;Stock CFD's\Nasdaq\SBGI.NAS;USD;USD;2;1.0;1;Ja
+GIII.NAS;G-III Apparel Group Ltd;Stock CFD's\Nasdaq\GIII.NAS;USD;USD;2;1.0;4;Ja
+GNTX.NAS;Gentex Corp/MI;Stock CFD's\Nasdaq\GNTX.NAS;USD;USD;2;1.0;1;Ja
+BZUN.NAS;Baozun Inc;Stock CFD's\Nasdaq\BZUN.NAS;USD;USD;2;1.0;1;Ja
+RRGB.NAS;Red Robin Gourmet Burgers Inc;Stock CFD's\Nasdaq\RRGB.NAS;USD;USD;2;1.0;2;Ja
+IRDM.NAS;Iridium Communications Inc;Stock CFD's\Nasdaq\IRDM.NAS;USD;USD;2;1.0;1;Ja
+HAIN.NAS;Hain Celestial Group Inc/The;Stock CFD's\Nasdaq\HAIN.NAS;USD;USD;2;1.0;1;Ja
+IONS.NAS;Ionis Pharmaceuticals Inc;Stock CFD's\Nasdaq\IONS.NAS;USD;USD;2;1.0;4;Ja
+LSCC.NAS;Lattice Semiconductor Corp;Stock CFD's\Nasdaq\LSCC.NAS;USD;USD;2;1.0;5;Ja
+SKYW.NAS;SkyWest Inc;Stock CFD's\Nasdaq\SKYW.NAS;USD;USD;2;1.0;5;Ja
+HTHT.NAS;Huazhu Group Ltd;Stock CFD's\Nasdaq\HTHT.NAS;USD;USD;2;1.0;2;Ja
+PCH.NAS;Potlatch Corp;Stock CFD's\Nasdaq\PCH.NAS;USD;USD;2;1.0;1;Ja
+LPSN.NAS;LivePerson Inc;Stock CFD's\Nasdaq\LPSN.NAS;USD;USD;2;1.0;3;Ja
+CAKE.NAS;Cheesecake Factory Inc/The;Stock CFD's\Nasdaq\CAKE.NAS;USD;USD;2;1.0;3;Ja
+SEIC.NAS;SEI Investments Co;Stock CFD's\Nasdaq\SEIC.NAS;USD;USD;2;1.0;3;Ja
+YNDX.NAS;Yandex NV;Stock CFD's\Nasdaq\YNDX.NAS;USD;USD;2;1.0;2;Ja
+BRKR.NAS;Bruker Corp;Stock CFD's\Nasdaq\BRKR.NAS;USD;USD;2;1.0;2;Ja
+PLCE.NAS;Children's Place Retail Stores;Stock CFD's\Nasdaq\PLCE.NAS;USD;USD;2;1.0;2;Ja
+EHTH.NAS;eHealth Inc;Stock CFD's\Nasdaq\EHTH.NAS;USD;USD;2;1.0;2;Ja
+BILI.NAS;Bilibili Inc.;Stock CFD's\Nasdaq\BILI.NAS;USD;USD;2;1.0;1;Ja
+JACK.NAS;Jack in the Box Inc;Stock CFD's\Nasdaq\JACK.NAS;USD;USD;2;1.0;1;Ja
+IRBT.NAS;iRobot Corp;Stock CFD's\Nasdaq\IRBT.NAS;USD;USD;2;1.0;1;Ja
+QDEL.NAS;Quidel Corp;Stock CFD's\Nasdaq\QDEL.NAS;USD;USD;2;1.0;2;Ja
+EEFT.NAS;Euronet Worldwide Inc;Stock CFD's\Nasdaq\EEFT.NAS;USD;USD;2;1.0;3;Ja
+CBRL.NAS;Cracker Barrel Old Country Sto;Stock CFD's\Nasdaq\CBRL.NAS;USD;USD;2;1.0;1;Ja
+SEDG.NAS;SolarEdge Technologies Inc;Stock CFD's\Nasdaq\SEDG.NAS;USD;USD;2;1.0;4;Ja
+MSTR.NAS;MicroStrategy Inc;Stock CFD's\Nasdaq\MSTR.NAS;USD;USD;2;1.0;4;Ja
+MVRS.NAS;Meta Platforms Inc CFD;Stock CFD's\Nasdaq\MVRS.NAS;USD;USD;2;1.0;2;Ja
+STKL.NAS;SunOpta Inc (US);Stock CFD's\Nasdaq\STKL.NAS;USD;USD;2;1.0;1;Ja
+TFSL.NAS;TFS Financial Corp;Stock CFD's\Nasdaq\TFSL.NAS;USD;USD;2;1.0;1;Ja
+VECO.NAS;Veeco Instruments Inc;Stock CFD's\Nasdaq\VECO.NAS;USD;USD;2;1.0;4;Ja
+WERN.NAS;Werner Enterprises Inc;Stock CFD's\Nasdaq\WERN.NAS;USD;USD;2;1.0;3;Ja
+EXLS.NAS;ExlService Holdings Inc;Stock CFD's\Nasdaq\EXLS.NAS;USD;USD;2;1.0;2;Ja
+EXPO.NAS;Exponent Inc;Stock CFD's\Nasdaq\EXPO.NAS;USD;USD;2;1.0;1;Ja
+SFNC.NAS;Simmons First National Corp;Stock CFD's\Nasdaq\SFNC.NAS;USD;USD;2;1.0;1;Ja
+BGC.NAS;BGC Partners Inc;Stock CFD's\Nasdaq\BGC.NAS;USD;USD;2;1.0;1;Ja
+EURBBL_Z5;Euro Bobl -December 25 CFD;Bonds CFDs\EURBBL_Z5;USD;EUR;2;100.0;5;Ja
+EURSCA_Z5;Euro Schatz -December 25 CFD;Bonds CFDs\EURSCA_Z5;USD;EUR;2;100.0;1;Ja
+ITB10Y_Z5;Euro BTP Italian 10 YR -December 25 CFD;Bonds CFDs\ITB10Y_Z5;USD;EUR;2;100.0;5;Ja
+EURBND_Z5;Euro Bund -December 25 CFD;Bonds CFDs\EURBND_Z5;USD;EUR;2;100.0;5;Ja
+CBAN.NYSE;Colony Bankcorp Inc;Stock CFD's\Nasdaq\CBAN.NYSE;USD;USD;3;1.0;0;Ja
+DPZ.NAS;Domino's Pizza;Stock CFD's\Nasdaq\DPZ.NAS;USD;USD;3;1.0;0;Ja
+SBLX.NAS;STABLEX TECHNOLOGIES INC;Stock CFD's\Nasdaq\SBLX.NAS;USD;USD;3;1.0;0;Ja
+BBT.NYSE;Berkshire Hills Bancorp Inc;Stock CFD's\NYSE\BBT.NYSE;USD;USD;2;1.0;1;Ja
+Sugar_H6;Sugar -March 26 CFD;Commodities\Softs\Sugar_H6;USD;USD;2;100.0;5;Ja
+UKGB_H6;UK Long Gilt -March 26 CFD;Bonds CFDs\UKGB_H6;USD;GBP;2;100.0;3;Ja
+UST30Y_H6;US T-Bond 30 YR-March 26 CFD;Bonds CFDs\UST30Y_H6;USD;USD;2;100.0;4;Ja
+BRENT_G6;Crude Oil Brent -February 26 CFD;Commodities\Energies\Energies Futures\BRENT_G6;USD;USD;2;100.0;3;Ja
+WTI_F6;US Crude Oil -January 26 CFD;Commodities\Energies\Energies Futures\WTI_F6;USD;USD;2;100.0;3;Ja
+DRH.NAS;DiamondRock Hospitality Co;Stock CFD's\Nasdaq\DRH.NAS;USD;USD;3;1.0;0;Ja
