@@ -83,6 +83,9 @@ class LiveConfig:
     min_profit_factor: float = 1.0
     max_gross_exposure_pct: float = 0.03
     price_guard_margin: float = 0.0
+    exposure_basis: str = "margin"
+    exposure_custom_factor: float = 1.0
+    exposure_default_leverage: float = 30.0
     atr_period: int = 14
     ema_fast: int = 34
     ema_slow: int = 144

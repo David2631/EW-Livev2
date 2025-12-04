@@ -43,6 +43,7 @@ class OrderManager:
         self._recent_trade_times: Dict[str, Deque[datetime]] = defaultdict(deque)
         self._last_trade_time: Dict[str, datetime] = {}
         self._webhook_fingerprint = self._compute_webhook_fingerprint(cfg.webhook_url)
+        self._account_leverage: float = cfg.exposure_default_leverage
         if self._webhook_fingerprint:
             logger.info(f"Webhook aktiviert (Fingerprint={self._webhook_fingerprint})")
 
@@ -119,8 +120,8 @@ class OrderManager:
             volume, risk_amount, risk_per_lot, stop_distance = self._calculate_volume(
                 symbol, signal, info, stop_price, execution_price
             )
-            trade_notional = self._notional_value(symbol, volume, execution_price, info)
-            if not self._within_exposure_limit(symbol, trade_notional):
+            trade_exposure = self._exposure_value(symbol, volume, execution_price, info)
+            if not self._within_exposure_limit(symbol, trade_exposure):
                 continue
             direction = signal.direction.value if isinstance(signal.direction, Dir) else signal.direction
             try:
@@ -348,18 +349,18 @@ class OrderManager:
         actual = abs(entry_price - stop_price)
         return actual >= required, required, actual
 
-    def _within_exposure_limit(self, symbol: str, additional_notional: float) -> bool:
+    def _within_exposure_limit(self, symbol: str, additional_exposure: float) -> bool:
         limit_pct = max(0.0, self.cfg.max_gross_exposure_pct)
         if limit_pct <= 0:
             return True
         balance = self._refresh_account_balance()
         allowed = balance * limit_pct
         current = self._current_gross_exposure()
-        projected = current + max(0.0, additional_notional)
+        projected = current + max(0.0, additional_exposure)
         if projected > allowed:
             projected_pct = (projected / balance * 100) if balance > 0 else 0.0
             logger.info(
-                f"[{symbol}] Signal übersprungen: Exponierung {projected:.2f} > Limit {allowed:.2f} (max {limit_pct*100:.2f}% vom Konto, aktuell {projected_pct:.2f}% vom Konto)"
+                f"[{symbol}] Signal übersprungen: Exponierung {projected:.2f} > Limit {allowed:.2f} (max {limit_pct*100:.2f}% vom Konto, aktuell {projected_pct:.2f}% vom Konto, Basis {self.cfg.exposure_basis})"
             )
             return False
         return True
@@ -374,7 +375,7 @@ class OrderManager:
             if not symbol or volume <= 0 or price <= 0:
                 continue
             info = self.adapter.get_symbol_info(symbol)
-            total += self._notional_value(symbol, volume, price, info)
+            total += self._exposure_value(symbol, volume, price, info)
         return total
 
     def _notional_value(self, symbol: str, volume: float, price: float, info: Optional[Any]) -> float:
@@ -382,6 +383,26 @@ class OrderManager:
             return 0.0
         contract_size = getattr(info, "trade_contract_size", None) or getattr(info, "contract_size", None) or 1.0
         return abs(volume) * float(contract_size) * price
+
+    def _current_leverage(self) -> float:
+        if self._account_leverage and self._account_leverage > 0:
+            return self._account_leverage
+        if self.cfg.exposure_default_leverage and self.cfg.exposure_default_leverage > 0:
+            return self.cfg.exposure_default_leverage
+        return 1.0
+
+    def _exposure_factor(self) -> float:
+        basis = (self.cfg.exposure_basis or "notional").lower()
+        if basis == "margin":
+            leverage = self._current_leverage()
+            return 1.0 / max(leverage, 1.0)
+        if basis == "custom":
+            return max(self.cfg.exposure_custom_factor, 0.0)
+        return 1.0
+
+    def _exposure_value(self, symbol: str, volume: float, price: float, info: Optional[Any]) -> float:
+        base = self._notional_value(symbol, volume, price, info)
+        return base * self._exposure_factor()
 
     def _notify_webhook(
         self,
@@ -475,6 +496,17 @@ class OrderManager:
         info = self.adapter.get_account_info()
         balance = float(info.get("balance", self.cfg.account_balance)) if info else self.cfg.account_balance
         self.cfg.account_balance = balance
+        if info:
+            leverage = info.get("leverage")
+            if leverage is not None:
+                try:
+                    leverage_value = float(leverage)
+                except (TypeError, ValueError):
+                    leverage_value = None
+            else:
+                leverage_value = None
+            if leverage_value and leverage_value > 0:
+                self._account_leverage = leverage_value
         if balance > self._highest_balance:
             self._highest_balance = balance
         return balance

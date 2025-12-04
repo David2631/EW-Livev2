@@ -38,7 +38,7 @@ PRICE_GUARD_PATTERN = re.compile(
 STOP_DIST_PATTERN = re.compile(r"Stop-Distanz\s+([0-9.,]+)\s+<\s+Mindestabstand\s+([0-9.,]+)")
 CONFIDENCE_PATTERN = re.compile(r"Confidence\s+([0-9.,]+)\s+<\s+Threshold\s+([0-9.,]+)")
 EXPOSURE_PATTERN = re.compile(
-    r"Exponierung\s+[0-9.,]+\s+>\s+Limit\s+[0-9.,]+\s+\(max\s+([0-9.,]+)%\s+vom\s+Konto,\s+aktuell\s+([0-9.,]+)%\s+vom\s+Konto\)"
+    r"Exponierung\s+[0-9.,]+\s+>\s+Limit\s+[0-9.,]+\s+\(max\s+([0-9.,]+)%\s+vom\s+Konto,\s+aktuell\s+([0-9.,]+)%\s+vom\s+Konto(?:,\s+Basis\s+([^\)]+))?\)"
 )
 COOLDOWN_PATTERN = re.compile(r"Cooldown aktiv\s+\(([0-9.,]+)m verbleibend\)")
 CYCLE_DURATION_PATTERN = re.compile(r"Dauer=([0-9.,]+)s")
@@ -322,6 +322,7 @@ def _extract_metrics(message: str) -> dict:
         "cycle_duration": None,
         "exposure_pct": None,
         "exposure_limit_pct": None,
+        "exposure_basis": None,
     }
 
     cr_match = CR_PATTERN.search(message)
@@ -375,6 +376,9 @@ def _extract_metrics(message: str) -> dict:
             data["exposure_limit_pct"] = limit_pct
         if actual_pct is not None:
             data["exposure_pct"] = actual_pct
+        basis_value = exposure_match.group(3)
+        if basis_value:
+            data["exposure_basis"] = basis_value.strip()
 
     return data
 
@@ -684,26 +688,28 @@ def main() -> None:
 
         exposure_series = filtered["exposure_pct"] if "exposure_pct" in filtered else pd.Series(dtype=float)
         limit_series = filtered["exposure_limit_pct"] if "exposure_limit_pct" in filtered else pd.Series(dtype=float)
+        basis_series = filtered["exposure_basis"] if "exposure_basis" in filtered else pd.Series(dtype=str)
         exposure_values = exposure_series.dropna()
         limit_values = limit_series.dropna()
+        basis_values = basis_series.dropna()
         st.subheader("Expositionslimits")
         if exposure_values.empty:
             st.write("Keine Expositionslimit-Skips vorhanden.")
         else:
             avg_pct = exposure_values.mean()
             max_pct = exposure_values.max()
-            limit_pct = limit_values.mean() if not limit_values.empty else None
-            if limit_pct is not None:
-                avg_display = min(avg_pct, limit_pct)
-                max_display = min(max_pct, limit_pct)
-            else:
-                avg_display = avg_pct
-                max_display = max_pct
             exp_col1, exp_col2 = st.columns(2)
-            exp_col1.metric("Ø Exponierung", f"{avg_display:.2f}% vom Konto")
-            exp_col2.metric("Max. Exponierung", f"{max_display:.2f}% vom Konto", f"{len(exposure_values)} Ereignisse")
-            if limit_pct is not None:
-                st.caption(f"Limit durchschnittlich {limit_pct:.2f}% vom Konto. Die dargestellten Werte werden nicht über dem Limit angezeigt (tatsächliche Werte siehe Logs).")
+            exp_col1.metric("Ø Exponierung", f"{avg_pct:.2f}% vom Konto")
+            exp_col2.metric("Max. Exponierung", f"{max_pct:.2f}% vom Konto", f"{len(exposure_values)} Ereignisse")
+            captions: List[str] = []
+            if not limit_values.empty:
+                captions.append(f"Limit durchschnittlich {limit_values.mean():.2f}% vom Konto")
+            if not basis_values.empty:
+                mode_basis = basis_values.mode()
+                basis_hint = mode_basis.iloc[0] if not mode_basis.empty else basis_values.iloc[0]
+                captions.append(f"Basis '{basis_hint}'")
+            if captions:
+                st.caption(". ".join(captions) + ".")
 
         st.subheader("Skip-Gründe")
         tracked_categories = {
