@@ -53,11 +53,8 @@ class OrderManager:
         if not self.adapter.connected:
             raise RuntimeError("MT5 nicht verbunden")
         existing_positions = self.adapter.get_positions(symbol)
-        placed_this_cycle = False
         limited_signals = signals[: self.cfg.max_open_trades]
         for idx, signal in enumerate(limited_signals):
-            if placed_this_cycle:
-                break
             open_positions = existing_positions if idx == 0 else self.adapter.get_positions(symbol)
             if self.cfg.use_ml_filters:
                 threshold = self.cfg.ml_probability_threshold + self.cfg.ml_threshold_shift
@@ -128,6 +125,11 @@ class OrderManager:
                     f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Exposure-Limit lässt kein Volumen zu"
                 )
                 continue
+            if self._duplicate_position_present(open_positions, signal.direction, execution_price):
+                logger.info(
+                    f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Position bei {execution_price:.5f} bereits vorhanden"
+                )
+                continue
             trade_exposure = self._exposure_value(symbol, volume, execution_price, info)
             if not self._within_exposure_limit(symbol, trade_exposure):
                 continue
@@ -186,7 +188,6 @@ class OrderManager:
                 should_continue = self._process_execution_result(symbol, signal.direction, result)
                 if result.get("retcode") == self.SUCCESS_RETCODE:
                     self._last_confidence[symbol] = confidence
-                    placed_this_cycle = True
                 if not should_continue:
                     break
             except Exception as exc:
@@ -200,6 +201,31 @@ class OrderManager:
         if price is None or price <= 0:
             return None
         return float(price)
+
+    def _duplicate_position_present(self, positions: List[Dict[str, Any]], direction: Dir, price: float) -> bool:
+        if not positions:
+            return False
+        tolerance = max(abs(price) * 1e-5, 1e-6)
+        for pos in positions:
+            try:
+                volume = float(pos.get("volume", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if volume == 0.0:
+                continue
+            is_long = volume > 0
+            if (direction == Dir.UP and not is_long) or (direction == Dir.DOWN and is_long):
+                continue
+            raw_price = pos.get("price_open") or pos.get("price_current") or pos.get("price") or 0.0
+            try:
+                existing_price = abs(float(raw_price))
+            except (TypeError, ValueError):
+                continue
+            if existing_price <= 0.0:
+                continue
+            if math.isclose(existing_price, abs(price), rel_tol=1e-4, abs_tol=tolerance):
+                return True
+        return False
 
     def _price_supports_order(self, symbol: str, direction: Dir, price: float, stop_price: float, take_profit: float) -> bool:
         eps = 1e-6
