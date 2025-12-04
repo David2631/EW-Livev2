@@ -143,8 +143,10 @@ def verify_mt5_connection(adapter: MetaTrader5Adapter) -> None:
 
 def main() -> None:
     args = parse_args()
-    base_config = LiveConfig.load_from_file(args.config) if args.config else LiveConfig()
-    cfg = base_config.with_overrides(LiveConfig.env_overrides())
+    base_config = LiveConfig.load_from_file(args.config)
+    env_overrides = LiveConfig.env_overrides()
+    cfg = base_config.with_overrides(env_overrides, provided_keys=set(env_overrides.keys()))
+    cfg = cfg.apply_aggressive_profile()
     symbols_file = args.symbols_file or cfg.symbols_file
     cfg.symbols_file = symbols_file
     log_path = Path(args.log_file)

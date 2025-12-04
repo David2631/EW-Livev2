@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, ClassVar, Dict, Optional, Set, Tuple
 
 
 @dataclass
@@ -80,7 +80,7 @@ class LiveConfig:
     atr_pct_max: float = 2.5
     confirm_bars_h1: int = 6
     confirm_bars_m30: int = 12
-    confirm_rules: Tuple[str, ...] = field(default_factory=lambda: ("break_prev_extreme",))
+    confirm_rules: Tuple[str, ...] = field(default_factory=lambda: ("break_prev_extreme", "ema_fast_cross"))
     allow_touch_if_no_confirm: bool = True
     use_w5: bool = False
     use_adx: bool = False
@@ -88,15 +88,70 @@ class LiveConfig:
     use_ema_trend: bool = False
     require_price_above_ema_fast: bool = False
 
-    def with_overrides(self, overrides: Dict[str, Any]) -> "LiveConfig":
+    AGGRESSIVE_PROFILE_DEFAULTS: ClassVar[Dict[str, Any]] = {
+        "atr_period": 14,
+        "atr_mult_buffer": 0.20,
+        "primary_zz_pct": 0.012,
+        "primary_zz_atr_mult": 0.9,
+        "primary_min_imp_atr": 1.8,
+        "h1_zz_pct": 0.0020,
+        "h1_zz_atr_mult": 0.6,
+        "h1_min_imp_atr": 1.6,
+        "entry_zone_w3": (0.382, 0.786),
+        "entry_zone_w5": (0.236, 0.618),
+        "entry_zone_c": (0.382, 0.786),
+        "entry_window_h1": 96,
+        "entry_window_m30": 192,
+        "max_hold_h1": 192,
+        "max_hold_m30": 384,
+        "tp1": 1.272,
+        "tp2": 1.618,
+        "ema_fast": 34,
+        "ema_slow": 144,
+        "use_ema_trend": False,
+        "require_price_above_ema_fast": False,
+        "atr_pct_min": 0.05,
+        "atr_pct_max": 2.5,
+        "confirm_bars_h1": 6,
+        "confirm_bars_m30": 12,
+        "confirm_rules": ("break_prev_extreme", "ema_fast_cross"),
+        "allow_touch_if_no_confirm": True,
+        "use_w5": False,
+        "use_adx": False,
+        "adx_trend_threshold": 25.0,
+    }
+
+    def __post_init__(self) -> None:
+        if not hasattr(self, "_provided_fields"):
+            object.__setattr__(self, "_provided_fields", set())
+
+    def with_overrides(
+        self,
+        overrides: Dict[str, Any],
+        provided_keys: Optional[Set[str]] = None,
+        register_overrides_as_provided: bool = True,
+    ) -> "LiveConfig":
         """Returniert eine neue Config, bei der Einträge aus overrides priorisiert werden."""
-        data = {**self.__dict__, **{k: v for k, v in overrides.items() if v is not None}}
-        return LiveConfig(**data)
+        base_data = {k: getattr(self, k) for k in self.__dataclass_fields__}
+        allowed_fields = set(self.__dataclass_fields__)
+        filtered_overrides = {
+            k: v for k, v in overrides.items() if v is not None and k in allowed_fields
+        }
+        data = {**base_data, **filtered_overrides}
+        result = LiveConfig(**data)
+        provided = set(getattr(self, "_provided_fields", set()))
+        if provided_keys is not None:
+            provided |= provided_keys
+        elif register_overrides_as_provided:
+            provided |= set(filtered_overrides.keys())
+        object.__setattr__(result, "_provided_fields", provided)
+        return result
 
     @classmethod
     def load_from_file(cls, path: Optional[str]) -> "LiveConfig":
+        base = cls()
         if path is None:
-            return cls()
+            return base.apply_aggressive_profile()
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 contents = json.load(fh)
@@ -104,7 +159,8 @@ class LiveConfig:
             raise
         except Exception as exc:  # pragma: no cover
             raise ValueError(f"Konfigurationsdatei '{path}' konnte nicht geladen werden: {exc}")
-        return cls(**contents)
+        cfg = base.with_overrides(contents, provided_keys=set(contents.keys()))
+        return cfg.apply_aggressive_profile()
 
     @classmethod
     def env_overrides(cls) -> Dict[str, Any]:
@@ -117,11 +173,21 @@ class LiveConfig:
 
     @classmethod
     def load_from_env(cls) -> "LiveConfig":
-        return cls().with_overrides(cls.env_overrides())
+        base = cls()
+        overrides = cls.env_overrides()
+        cfg = base.with_overrides(overrides, provided_keys=set(overrides.keys()))
+        return cfg.apply_aggressive_profile()
 
     def dump(self) -> Dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if v is not None}
+        return {k: getattr(self, k) for k in self.__dataclass_fields__ if getattr(self, k) is not None}
 
     @property
     def working_dir(self) -> Path:
         return Path(self.csv_history_path).parent if self.csv_history_path else Path.cwd()
+
+    def apply_aggressive_profile(self) -> "LiveConfig":
+        provided = set(getattr(self, "_provided_fields", set()))
+        filtered = {k: v for k, v in self.AGGRESSIVE_PROFILE_DEFAULTS.items() if k not in provided}
+        if not filtered:
+            return self
+        return self.with_overrides(filtered, register_overrides_as_provided=False)
