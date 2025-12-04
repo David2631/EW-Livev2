@@ -400,7 +400,7 @@ class MetaTrader5Adapter:
                 "type_filling": filling_mode,
             }
             request["type_time"] = mt5.ORDER_TIME_GTC
-            if expiration is not None:
+            if expiration and expiration > 0:
                 request["type_time"] = mt5.ORDER_TIME_SPECIFIED
                 request["expiration"] = expiration
             candidates = self._filling_candidates(filling_mode)

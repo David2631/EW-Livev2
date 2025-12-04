@@ -132,13 +132,7 @@ class OrderManager:
             try:
                 if use_pending_order:
                     expiration_ts = None
-                    if self.cfg.pending_order_expiry_minutes > 0:
-                        expiration_ts = int(
-                            (
-                                datetime.utcnow()
-                                + timedelta(minutes=self.cfg.pending_order_expiry_minutes)
-                            ).timestamp()
-                        )
+                    expiration_ts = 0
                     result = self.adapter.place_limit_order(
                         symbol=symbol,
                         volume=volume,
