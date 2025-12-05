@@ -908,7 +908,7 @@ def main() -> None:
                     .properties(height=320)
                 )
                 st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
-                st.altair_chart(chart, use_container_width=True)
+                st.altair_chart(chart, width="stretch")
                 st.markdown('</div>', unsafe_allow_html=True)
 
         st.subheader("Stündliche Skip-Verteilung")
@@ -932,7 +932,7 @@ def main() -> None:
                 .properties(height=260)
             )
             st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
-            st.altair_chart(hourly_chart, use_container_width=True)
+            st.altair_chart(hourly_chart, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.subheader("Kategorie-Anteile")
@@ -955,7 +955,7 @@ def main() -> None:
                 .properties(height=320)
             )
             st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
-            st.altair_chart(cat_chart, use_container_width=True)
+            st.altair_chart(cat_chart, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.subheader("Cycle-Dauer")
@@ -973,7 +973,7 @@ def main() -> None:
                 )
                 .properties(height=250)
             )
-            st.altair_chart(cycle_chart, use_container_width=True)
+            st.altair_chart(cycle_chart, width="stretch")
 
         st.subheader("Top-Symbole nach Skips")
         top_symbols = (
@@ -1006,7 +1006,7 @@ def main() -> None:
                 )
                 .properties(height=320)
             )
-            st.altair_chart(heat_chart, use_container_width=True)
+            st.altair_chart(heat_chart, width="stretch")
 
         st.subheader("Profit-Faktor Insights")
         profit_df = filtered[(filtered["category"] == "Profit-Faktor") & filtered["cr_ratio"].notna()]
@@ -1031,7 +1031,7 @@ def main() -> None:
                 )
                 .properties(height=250)
             )
-            st.altair_chart(hist, use_container_width=True)
+            st.altair_chart(hist, width="stretch")
 
         st.subheader("Confidence-Filter")
         confidence_df = filtered[filtered["confidence_gap"].notna()]
@@ -1121,7 +1121,7 @@ def main() -> None:
                     .interactive()
                 )
                 st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
-                st.altair_chart(signal_chart, use_container_width=True)
+                st.altair_chart(signal_chart, width="stretch")
                 st.markdown('</div>', unsafe_allow_html=True)
                 metric_cols = st.columns(3)
                 avg_entry = chart_source["entry_price"].mean()
