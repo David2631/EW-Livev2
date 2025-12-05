@@ -5,7 +5,7 @@ import io
 import re
 import secrets
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -48,6 +48,17 @@ ENTRY_TIME_PATTERN = re.compile(r"entry_time=Timestamp\('(?P<entry_time>[^']+)'\
 ENTRY_DIRECTION_PATTERN = re.compile(r"direction=<Dir\.\w+:\s*'(?P<direction>[A-Z]+)'\>")
 ENTRY_ZONE_PATTERN = re.compile(r"entry_zone=\((?P<low>[0-9.,+-]+),\s*(?P<high>[0-9.,+-]+)\)")
 
+ALLOWED_EMAIL_DOMAIN = "@fmmuc.com"
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_SECONDS = 30
+
+DEPARTMENTS = [
+    "Research",
+    "Quantitative Investments",
+    "Asset Management",
+    "M&A",
+    "Macroeconomics",
+]
 
 def _default_segment_dir() -> Path:
     try:
@@ -146,6 +157,9 @@ def _ensure_emergency_account() -> None:
 
 
 def _verify_credentials(email: str, password: str, totp_code: str) -> tuple[bool, str, Optional[sqlite3.Row]]:
+    normalized_email = email.strip().lower()
+    if not normalized_email.endswith(ALLOWED_EMAIL_DOMAIN):
+        return False, f"Nur {ALLOWED_EMAIL_DOMAIN}-Accounts sind zugelassen.", None
     row = _get_user(email)
     if not row:
         return False, "Benutzer nicht gefunden.", None
@@ -187,11 +201,65 @@ def _inject_dashboard_styles() -> None:
         <style>
         :root {
             --card-bg: linear-gradient(135deg, #0c1116, #1a2330);
-            --card-glow: 0 8px 30px rgba(12, 123, 255, 0.35);
+            --card-glow: 0 10px 40px rgba(12, 123, 255, 0.35);
             --text-muted: rgba(255, 255, 255, 0.65);
         }
         body {
             background-color: #03070c;
+        }
+        .user-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.35rem 1rem;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            background: rgba(255, 255, 255, 0.03);
+            font-size: 0.95rem;
+            margin-bottom: 0.75rem;
+        }
+        .user-chip strong {
+            color: #78dbff;
+        }
+        .pipeline-hero {
+            background: linear-gradient(140deg, rgba(8, 11, 26, 0.95), rgba(18, 32, 64, 0.9));
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 24px;
+            padding: 32px;
+            color: #f7f9fc;
+            box-shadow: 0 25px 60px rgba(2, 8, 24, 0.7);
+            min-height: 220px;
+        }
+        .pipeline-hero .pipeline-label {
+            text-transform: uppercase;
+            letter-spacing: 0.3em;
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+        .pipeline-hero .pipeline-count {
+            font-size: 3.4rem;
+            margin: 12px 0 6px;
+            color: #78dbff;
+            display: block;
+        }
+        .pipeline-hero .pipeline-subtitle {
+            font-size: 1rem;
+            color: rgba(255, 255, 255, 0.75);
+            margin-bottom: 18px;
+        }
+        .pipeline-hero .pipeline-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            font-size: 0.9rem;
+        }
+        .pipeline-hero .pipeline-meta span {
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.55);
+        }
+        .pipeline-hero .pipeline-meta strong {
+            color: #ffffff;
+            font-size: 1rem;
         }
         .status-grid {
             display: grid;
@@ -206,6 +274,10 @@ def _inject_dashboard_styles() -> None:
             border: 1px solid rgba(255, 255, 255, 0.06);
             box-shadow: var(--card-glow);
             animation: pulse 8s ease-in-out infinite;
+            min-height: 130px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
         .status-card strong {
             display: block;
@@ -218,7 +290,7 @@ def _inject_dashboard_styles() -> None:
         .insight-panel,
         .insight-panel.chart-panel {
             border-radius: 18px;
-            background: linear-gradient(180deg, rgba(8,31,52,0.75), rgba(11,47,81,0.9));
+            background: linear-gradient(180deg, rgba(5, 12, 26, 0.95), rgba(12, 24, 44, 0.95));
             border: 1px solid rgba(255, 255, 255, 0.12);
             padding: 16px;
             box-shadow: 0 20px 45px rgba(2, 8, 24, 0.7);
@@ -239,6 +311,12 @@ def _inject_dashboard_styles() -> None:
         }
         .chart-panel .stMarkdown {
             margin-bottom: 0;
+        }
+        @media (max-width: 768px) {
+            .pipeline-hero {
+                padding: 24px;
+                min-height: auto;
+            }
         }
         @media (max-width: 768px) {
             .status-card strong {
@@ -575,6 +653,66 @@ def _render_status_cards(cards: List[Tuple[str, str, str]]) -> None:
     st.markdown(f"<div class=\"status-grid\">{card_html}</div>", unsafe_allow_html=True)
 
 
+def _render_user_context() -> None:
+    user_email = st.session_state.get("user_email") or "Unbekannt"
+    department = st.session_state.get("department") or DEPARTMENTS[0]
+    st.markdown(
+        f"""
+        <div class=\"user-chip\">
+            <span>Angemeldet als <strong>{user_email}</strong></span>
+            <span>Abteilung <strong>{department}</strong></span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_pipeline_hero(
+    segment_count: int,
+    last_segment_ts: Optional[pd.Timestamp],
+    freshness_label: str,
+    last_cycle_time: Optional[pd.Timestamp],
+) -> None:
+    last_update_label = _format_timestamp(last_segment_ts)
+    cycle_label = _format_timestamp(last_cycle_time)
+    st.markdown(
+        f"""
+        <div class=\"pipeline-hero\">
+            <span class=\"pipeline-label\">Logsegmente</span>
+            <strong class=\"pipeline-count\">{segment_count}</strong>
+            <p class=\"pipeline-subtitle\">Aktualisiert vor {freshness_label}</p>
+            <div class=\"pipeline-meta\">
+                <div>
+                    <span>Letzte Aktualisierung</span>
+                    <strong>{last_update_label}</strong>
+                </div>
+                <div>
+                    <span>Letzter Cycle-Ende</span>
+                    <strong>{cycle_label}</strong>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _apply_chart_theme(chart: alt.Chart) -> alt.Chart:
+    return (
+        chart.configure_view(strokeWidth=0, fill="transparent")
+        .configure_axis(
+            labelColor="rgba(255, 255, 255, 0.8)",
+            titleColor="rgba(255, 255, 255, 0.95)",
+            gridColor="rgba(255, 255, 255, 0.15)",
+        )
+        .configure_legend(
+            labelColor="rgba(255, 255, 255, 0.85)",
+            titleColor="rgba(255, 255, 255, 0.95)",
+        )
+        .configure_title(color="#ffffff")
+    )
+
+
 def _timeline_frequency(span: pd.Timedelta) -> str:
     if span <= pd.Timedelta(hours=12):
         return "30min"
@@ -595,22 +733,50 @@ def _render_login_screen(initial_secret: Optional[str]) -> None:
         _render_totp_qr(initial_secret, DEFAULT_ADMIN_EMAIL)
         st.session_state.initial_totp_secret_shown = True
 
+    now = datetime.utcnow()
+    lockout_until_ts = st.session_state.get("login_lockout_until")
+    lockout_active = bool(lockout_until_ts and now.timestamp() < lockout_until_ts)
+    if lockout_active:
+        wait_seconds = max(1, int(lockout_until_ts - now.timestamp()))
+        st.warning(f"Zu viele Fehlversuche. Bitte warte {wait_seconds}s, bevor du es erneut versuchst.")
+
     with st.form("login_form"):
         email = st.text_input("E-Mail-Adresse")
         password = st.text_input("Passwort", type="password")
         totp_code = st.text_input("2FA-Code", max_chars=6)
-        submitted = st.form_submit_button("Anmelden")
+        st.caption("Wähle die Abteilung, in der du arbeitest. Dies dient nur der Einordnung.")
+        department = st.selectbox("Abteilung", DEPARTMENTS, key="login_department")
+        submitted = st.form_submit_button("Anmelden", disabled=lockout_active)
 
     if submitted:
+        now = datetime.utcnow()
+        lockout_until_ts = st.session_state.get("login_lockout_until")
+        if lockout_until_ts and now.timestamp() < lockout_until_ts:
+            wait_seconds = max(1, int(lockout_until_ts - now.timestamp()))
+            st.error(f"Zu viele Fehlversuche. Bitte warte noch {wait_seconds}s.")
+            return
+
         success, message, row = _verify_credentials(email, password, totp_code)
         if success and row:
             st.session_state.authenticated = True
             st.session_state.user_email = email
             st.session_state.is_admin = bool(row["is_admin"])
             st.session_state.login_error = ""
+            st.session_state.department = department or DEPARTMENTS[0]
+            st.session_state.login_failed_attempts = 0
+            st.session_state.login_lockout_until = None
             _rerun_app()
         else:
-            st.session_state.login_error = message
+            attempts = st.session_state.get("login_failed_attempts", 0) + 1
+            st.session_state.login_failed_attempts = attempts
+            remaining = max(0, MAX_LOGIN_ATTEMPTS - attempts)
+            if remaining == 0:
+                st.session_state.login_lockout_until = (
+                    now + timedelta(seconds=LOCKOUT_SECONDS)
+                ).timestamp()
+                st.session_state.login_error = f"Zu viele Fehlversuche. Bitte warte {LOCKOUT_SECONDS}s."
+            else:
+                st.session_state.login_error = f"{message} Noch {remaining} Versuch(e)."
 
     if st.session_state.login_error:
         st.error(st.session_state.login_error)
@@ -671,6 +837,10 @@ def main() -> None:
     st.session_state.setdefault("user_email", "")
     st.session_state.setdefault("is_admin", False)
     st.session_state.setdefault("login_error", "")
+    st.session_state.setdefault("department", DEPARTMENTS[0])
+    st.session_state.setdefault("login_department", DEPARTMENTS[0])
+    st.session_state.setdefault("login_failed_attempts", 0)
+    st.session_state.setdefault("login_lockout_until", None)
 
     if not st.session_state.authenticated:
         _render_login_screen(st.session_state.get("initial_totp_secret"))
@@ -679,9 +849,16 @@ def main() -> None:
     if st.sidebar.button("Abmelden"):
         for key in ("authenticated", "user_email", "is_admin", "login_error"):
             st.session_state[key] = False if key == "authenticated" else "" if key != "is_admin" else False
+        st.session_state["department"] = DEPARTMENTS[0]
+        st.session_state["login_department"] = DEPARTMENTS[0]
+        st.session_state["login_failed_attempts"] = 0
+        st.session_state["login_lockout_until"] = None
         _rerun_app()
 
+    department = st.session_state.get("department") or DEPARTMENTS[0]
+    user_email = st.session_state.user_email or "-"
     st.title("EW Live – Monitoring Dashboard")
+    _render_user_context()
     _inject_dashboard_styles()
     st.markdown(
         """
@@ -703,6 +880,10 @@ def main() -> None:
     force_refresh = st.sidebar.button("Neu laden")
     if force_refresh:
         load_log_entries.clear()
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"Angemeldet als: {user_email}")
+    st.sidebar.caption(f"Abteilung: {department}")
 
     if st.session_state.is_admin:
         _render_admin_panel()
@@ -781,13 +962,16 @@ def main() -> None:
         delta = pd.Timestamp.now(tz="UTC") - last_segment_ts
         freshness_label = f"{int(delta.total_seconds() // 60)}m alt"
     st.subheader("Pipeline-Status")
+    pipeline_col, status_col = st.columns([2, 1], gap="large")
+    with pipeline_col:
+        _render_pipeline_hero(segment_count, last_segment_ts, freshness_label, last_cycle_time)
     status_cards = [
-        ("Logsegmente", str(segment_count), "verfügbar"),
         ("Letzte Logaktualisierung", _format_timestamp(last_segment_ts), freshness_label),
         ("Ø Cycle-Dauer", _format_duration(avg_cycle_duration), "berechnet"),
         ("Letzte Cycle-Dauer", _format_duration(last_cycle_duration), "beendet"),
     ]
-    _render_status_cards(status_cards)
+    with status_col:
+        _render_status_cards(status_cards)
     if last_segment_ts:
         st.caption(f"Logdaten zuletzt aktualisiert vor {freshness_label}.")
     if last_cycle_time is not None:
@@ -907,6 +1091,7 @@ def main() -> None:
                     )
                     .properties(height=320)
                 )
+                chart = _apply_chart_theme(chart)
                 st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
                 st.altair_chart(chart, width="stretch")
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -931,6 +1116,7 @@ def main() -> None:
                 )
                 .properties(height=260)
             )
+            hourly_chart = _apply_chart_theme(hourly_chart)
             st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
             st.altair_chart(hourly_chart, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -954,6 +1140,7 @@ def main() -> None:
                 )
                 .properties(height=320)
             )
+            cat_chart = _apply_chart_theme(cat_chart)
             st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
             st.altair_chart(cat_chart, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -973,6 +1160,7 @@ def main() -> None:
                 )
                 .properties(height=250)
             )
+            cycle_chart = _apply_chart_theme(cycle_chart)
             st.altair_chart(cycle_chart, width="stretch")
 
         st.subheader("Top-Symbole nach Skips")
@@ -1006,6 +1194,7 @@ def main() -> None:
                 )
                 .properties(height=320)
             )
+            heat_chart = _apply_chart_theme(heat_chart)
             st.altair_chart(heat_chart, width="stretch")
 
         st.subheader("Profit-Faktor Insights")
@@ -1031,6 +1220,7 @@ def main() -> None:
                 )
                 .properties(height=250)
             )
+            hist = _apply_chart_theme(hist)
             st.altair_chart(hist, width="stretch")
 
         st.subheader("Confidence-Filter")
@@ -1120,6 +1310,7 @@ def main() -> None:
                     .properties(height=360)
                     .interactive()
                 )
+                signal_chart = _apply_chart_theme(signal_chart)
                 st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
                 st.altair_chart(signal_chart, width="stretch")
                 st.markdown('</div>', unsafe_allow_html=True)
