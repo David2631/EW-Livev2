@@ -41,6 +41,22 @@ AGGRESSIVE_PROFILE_DEFAULTS: Dict[str, Any] = {
     "adx_period": 14,
     "adx_trend_threshold": 25.0,
     "order_store_path": "logs/placed_orders.json",
+    "risk_per_trade": 0.01,
+    "dynamic_dd_risk": True,
+    "dd_risk_steps": ((-10.0, 0.75), (-20.0, 0.5), (-30.0, 0.35), (-40.0, 0.25)),
+    "use_vol_target": False,
+    "target_annual_vol": 0.25,
+    "vol_window_trades": 40,
+    "risk_per_trade_min": 0.002,
+    "risk_per_trade_max": 0.02,
+    "size_short_factor": 0.7,
+    "allow_shorts": True,
+    "use_ml_filters": True,
+    "size_by_prob": True,
+    "prob_size_min": 0.7,
+    "prob_size_max": 1.5,
+    "ml_probability_threshold": 0.65,
+    "ml_threshold_shift": 0.0,
 }
 
 

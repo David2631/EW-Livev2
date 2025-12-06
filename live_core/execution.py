@@ -52,7 +52,14 @@ class OrderManager:
     def evaluate_signals(self, symbol: str, signals: List[EntrySignal]) -> None:
         if not signals:
             return
-        signals = [s for s in signals if not self._already_executed(symbol, s)]
+        filtered: List[EntrySignal] = []
+        for signal in signals:
+            if not self._signal_passes_validation(signal):
+                continue
+            if self._already_executed(symbol, signal):
+                continue
+            filtered.append(signal)
+        signals = filtered
         if not signals:
             return
         if not self.adapter.connected:
@@ -401,6 +408,18 @@ class OrderManager:
             "timestamp": signal.entry_time.isoformat()
         })
         self._save_execution_history()
+    
+    def _signal_passes_validation(self, signal: EntrySignal) -> bool:
+        if signal.entry_zone is None:
+            return False
+        if signal.entry_time is None:
+            return False
+        if self.cfg.use_ml_filters:
+            threshold = self.cfg.ml_probability_threshold + self.cfg.ml_threshold_shift
+            probability = float(signal.confidence or 0.0)
+            if probability < threshold:
+                return False
+        return True
 
     def _log_skipped(self, symbol: str, reason: str, required: Optional[float], actual: Optional[float]) -> None:
         parts = [reason]
