@@ -220,6 +220,8 @@ class OrderManager:
             except Exception as exc:
                 logger.error(f"[{symbol}] Fehler beim Platzieren der Order: {exc}")
 
+        return stats
+
     def _current_price(self, symbol: str, direction: Dir) -> Optional[float]:
         tick = self.adapter.get_symbol_tick(symbol)
         if not tick:

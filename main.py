@@ -5,7 +5,7 @@ import argparse
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -63,7 +63,7 @@ class LogSegmentWriter:
         lines = self.handler.pop_lines()
         if not lines:
             return None
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         suffix = f"_cycle{cycle_index:05d}" if cycle_index is not None else ""
         path = self.target_dir / f"log_{timestamp}{suffix}.txt"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")

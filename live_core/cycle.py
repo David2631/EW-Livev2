@@ -71,6 +71,8 @@ class CycleRunner:
             last_signal = signals[-1] if signals else "none"
             self.logger(symbol, f"Signals={len(signals)} LastEntry={last_signal}")
             stats = self.manager.evaluate_signals(symbol, signals) if not dry_run else ExecutionCycleStats()
+            if stats is None:
+                stats = ExecutionCycleStats()
             validated += stats.validated_signals
             duplicates += stats.duplicate_signals
             executed += stats.executed_trades
