@@ -41,6 +41,10 @@ class OrderManager:
         10007: "Invalid stops - Abstand liegt unter `trade_stops_level` oder Mindestabstand.",
         10030: "Unsupported filling mode - Broker akzeptiert andere `order_filling_mode`-Typen.",
     }
+    _VALIDATION_TARGET_RATE = 0.65
+    _MAX_DYNAMIC_SHIFT = 0.08
+    _MIN_DYNAMIC_SHIFT = -0.05
+    _DUPLICATE_COOLDOWN_MAX = 30.0
 
     def __init__(self, mt5_adapter: MetaTrader5Adapter, cfg: LiveConfig):
         self.adapter = mt5_adapter
@@ -55,6 +59,9 @@ class OrderManager:
         self._webhook_fingerprint = self._compute_webhook_fingerprint(cfg.webhook_url)
         self._account_leverage: float = cfg.exposure_default_leverage
         self._execution_history: list[dict] = self._load_execution_history()
+        self._efficiency_history: Deque[dict[str, float]] = deque(maxlen=6)
+        self._dynamic_ml_shift: float = 0.0
+        self._adaptive_cooldown_minutes: float = 0.0
         if self._webhook_fingerprint:
             logger.info(f"Webhook aktiviert (Fingerprint={self._webhook_fingerprint})")
 
@@ -381,6 +388,36 @@ class OrderManager:
         else:
             logger.info(f"[{symbol}] Filling-Versuche: {summary}")
 
+    def adjust_for_cycle(self, stats: ExecutionCycleStats) -> None:
+        if stats.signals_received <= 0:
+            return
+        validation_rate = stats.validated_signals / stats.signals_received
+        execution_rate = stats.executed_trades / max(stats.validated_signals, 1)
+        duplicate_rate = stats.duplicate_signals / stats.signals_received
+        self._efficiency_history.append(
+            {"validation": validation_rate, "execution": execution_rate, "duplicate": duplicate_rate}
+        )
+        avg_validation = sum(entry["validation"] for entry in self._efficiency_history) / len(self._efficiency_history)
+        new_shift = self._dynamic_ml_shift
+        if avg_validation < self._VALIDATION_TARGET_RATE * 0.9:
+            new_shift = max(self._MIN_DYNAMIC_SHIFT, self._dynamic_ml_shift - 0.02)
+        elif avg_validation > self._VALIDATION_TARGET_RATE * 1.1:
+            new_shift = min(self._MAX_DYNAMIC_SHIFT, self._dynamic_ml_shift + 0.02)
+        if new_shift != self._dynamic_ml_shift:
+            logger.info(
+                f"Adaptive ML-Shift angepasst: {self._dynamic_ml_shift:.3f} -> {new_shift:.3f} (valid {(avg_validation*100):.1f}% )"
+            )
+            self._dynamic_ml_shift = new_shift
+        if duplicate_rate > 0.35:
+            cooldown = min(self._DUPLICATE_COOLDOWN_MAX, duplicate_rate * 40)
+            if abs(cooldown - self._adaptive_cooldown_minutes) > 0.5:
+                logger.warning(
+                    f"[adaptive] Duplikate-Rate {duplicate_rate:.2%} -> Cooldown auf {cooldown:.1f} Minuten erhöht"
+                )
+            self._adaptive_cooldown_minutes = cooldown
+        else:
+            self._adaptive_cooldown_minutes = max(0.0, self._adaptive_cooldown_minutes - 1.0)
+
     def _resolve_store_path(self) -> Path:
         order_store_path = self.cfg.order_store_path
         if not order_store_path:
@@ -429,7 +466,8 @@ class OrderManager:
         if signal.entry_time is None:
             return False
         if self.cfg.use_ml_filters:
-            threshold = self.cfg.ml_probability_threshold + self.cfg.ml_threshold_shift
+            shift = self.cfg.ml_threshold_shift + self._dynamic_ml_shift
+            threshold = self.cfg.ml_probability_threshold + shift
             probability = float(signal.confidence or 0.0)
             if probability < threshold:
                 return False
@@ -628,6 +666,18 @@ class OrderManager:
             return 0.0
         return (balance / self._highest_balance - 1.0) * 100.0
 
+    def report_cycle_metrics(self) -> dict[str, float]:
+        balance = self._refresh_account_balance()
+        exposure = self._current_gross_exposure()
+        drawdown = self._drawdown_percent(balance)
+        exposure_pct = (exposure / balance * 100.0) if balance and balance > 0 else 0.0
+        return {
+            "balance": balance,
+            "exposure": exposure,
+            "drawdown": drawdown,
+            "exposure_pct": exposure_pct,
+        }
+
     def _risk_multiplier_for_dd(self, dd_percent: float) -> float:
         if not self.cfg.dynamic_dd_risk:
             return 1.0
@@ -780,7 +830,7 @@ class OrderManager:
         return normalized
 
     def _cooldown_remaining(self, symbol: str) -> Optional[timedelta]:
-        cooldown = self.cfg.trade_cooldown_minutes
+        cooldown = max(self.cfg.trade_cooldown_minutes, self._adaptive_cooldown_minutes)
         if cooldown <= 0:
             return None
         last_trade = self._last_trade_time.get(symbol)

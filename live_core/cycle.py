@@ -77,6 +77,14 @@ class CycleRunner:
             duplicates += stats.duplicate_signals
             executed += stats.executed_trades
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+        cycle_stats = ExecutionCycleStats(
+            signals_received=total_signals,
+            validated_signals=validated,
+            duplicate_signals=duplicates,
+            executed_trades=executed,
+        )
+        if not dry_run:
+            self.manager.adjust_for_cycle(cycle_stats)
         return CycleSummary(
             index=self.cycle_index,
             start_time=start_time,

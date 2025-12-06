@@ -47,6 +47,13 @@ ENTRY_SIGNAL_PATTERN = re.compile(r"LastEntry=EntrySignal\((?P<payload>[^)]*)\)"
 ENTRY_TIME_PATTERN = re.compile(r"entry_time=Timestamp\('(?P<entry_time>[^']+)'\)")
 ENTRY_DIRECTION_PATTERN = re.compile(r"direction=<Dir\.\w+:\s*'(?P<direction>[A-Z]+)'\>")
 ENTRY_ZONE_PATTERN = re.compile(r"entry_zone=\((?P<low>[0-9.,+-]+),\s*(?P<high>[0-9.,+-]+)\)")
+CYCLE_RATE_PATTERN = re.compile(
+    r"ValidationRate=(?P<validation_rate>[0-9.]+).*?ExecutionRate=(?P<execution_rate>[0-9.]+).*?DuplicateRate=(?P<duplicate_rate>[0-9.]+)",
+    re.IGNORECASE,
+)
+EXPOSURE_SUMMARY_PATTERN = re.compile(
+    r"Balance=(?P<balance>[0-9.]+) Exposure=(?P<exposure>[0-9.]+) ExposurePct=(?P<exposure_pct>[0-9.]+)% Drawdown=(?P<drawdown>-?[0-9.]+)%"
+)
 CYCLE_STATS_PATTERN = re.compile(
     r"Signals=(?P<signals>\d+).*?Validated=(?P<validated>\d+).*?Executed=(?P<executed>\d+).*?Duplicates=(?P<duplicates>\d+)",
     re.IGNORECASE,
@@ -328,6 +335,30 @@ def _inject_dashboard_styles() -> None:
             font-size: 1.25rem;
             color: var(--accent-strong);
         }
+        .insight-summary {
+            margin-top: 1rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.9rem;
+        }
+        .insight-summary-card {
+            padding: 1rem;
+            border-radius: 14px;
+            background: rgba(15, 24, 44, 0.9);
+            border: 1px solid rgba(126, 225, 255, 0.2);
+            box-shadow: 0 12px 40px rgba(2, 2, 17, 0.8);
+        }
+        .insight-summary-card strong {
+            display: block;
+            font-size: 1.5rem;
+            color: var(--accent);
+        }
+        .insight-summary-card span {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+        }
         .status-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -540,6 +571,12 @@ def _extract_metrics(message: str) -> dict:
         "cycle_validated": None,
         "cycle_executed": None,
         "cycle_duplicates": None,
+        "validation_rate": None,
+        "execution_rate": None,
+        "duplicate_rate": None,
+        "balance": None,
+        "exposure": None,
+        "drawdown": None,
     }
 
     cr_match = CR_PATTERN.search(message)
@@ -591,6 +628,19 @@ def _extract_metrics(message: str) -> dict:
         data["cycle_validated"] = _safe_int(stats_match.group("validated"))
         data["cycle_executed"] = _safe_int(stats_match.group("executed"))
         data["cycle_duplicates"] = _safe_int(stats_match.group("duplicates"))
+
+    rate_match = CYCLE_RATE_PATTERN.search(message)
+    if rate_match:
+        data["validation_rate"] = _safe_float(rate_match.group("validation_rate"))
+        data["execution_rate"] = _safe_float(rate_match.group("execution_rate"))
+        data["duplicate_rate"] = _safe_float(rate_match.group("duplicate_rate"))
+
+    summary_match = EXPOSURE_SUMMARY_PATTERN.search(message)
+    if summary_match:
+        data["balance"] = _safe_float(summary_match.group("balance"))
+        data["exposure"] = _safe_float(summary_match.group("exposure"))
+        data["exposure_pct"] = _safe_float(summary_match.group("exposure_pct"))
+        data["drawdown"] = _safe_float(summary_match.group("drawdown"))
 
     exposure_match = EXPOSURE_PATTERN.search(message)
     if exposure_match:
@@ -802,6 +852,58 @@ def _insight_metrics(filtered: pd.DataFrame) -> dict[str, Any]:
     )
     insights["active_symbols"] = int(filtered["symbol"].nunique()) if not filtered.empty else 0
     return insights
+
+
+def _format_rate(value: Optional[float]) -> str:
+    if value is None:
+        return "-"
+    return f"{value * 100:.1f}%"
+
+
+def _execution_efficiency_snapshot(cycles: pd.DataFrame) -> dict[str, Optional[float]]:
+    snapshot = {
+        "signals": None,
+        "validated": None,
+        "executed": None,
+        "duplicates": None,
+        "validation_rate": None,
+        "execution_rate": None,
+        "duplicate_rate": None,
+    }
+    if cycles.empty:
+        return snapshot
+    latest = cycles.sort_values("timestamp").iloc[-1]
+    signals = _safe_int(latest.get("cycle_signals"))
+    validated = _safe_int(latest.get("cycle_validated"))
+    executed = _safe_int(latest.get("cycle_executed"))
+    duplicates = _safe_int(latest.get("cycle_duplicates"))
+    snapshot.update(
+        signals=signals,
+        validated=validated,
+        executed=executed,
+        duplicates=duplicates,
+    )
+    if signals > 0:
+        snapshot["validation_rate"] = validated / signals
+        snapshot["duplicate_rate"] = duplicates / signals
+    if validated > 0:
+        snapshot["execution_rate"] = executed / validated
+    return snapshot
+
+
+def _execution_efficiency_timeseries(cycles: pd.DataFrame) -> pd.DataFrame:
+    if cycles.empty:
+        return pd.DataFrame(columns=["timestamp", "cycle_signals", "cycle_validated", "cycle_executed", "cycle_duplicates"])
+    ts = cycles.copy()
+    ts = ts[ts["timestamp"].notna()]
+    ts = ts.sort_values("timestamp")
+    ts = ts.assign(
+        cycle_signals=ts["cycle_signals"].fillna(0),
+        cycle_validated=ts["cycle_validated"].fillna(0),
+        cycle_executed=ts["cycle_executed"].fillna(0),
+        cycle_duplicates=ts["cycle_duplicates"].fillna(0),
+    )
+    return ts[["timestamp", "cycle_signals", "cycle_validated", "cycle_executed", "cycle_duplicates"]]
 
 
 def _render_pipeline_hero(
@@ -1234,6 +1336,11 @@ def main() -> None:
             st.bar_chart(reason_counts, x="Kategorie", y="Anzahl")
 
     with insights_tab:
+        cycle_stats = filtered[filtered["symbol"] == "cycle"]
+        cycle_metrics = cycle_stats[cycle_stats["cycle_signals"].notna()]
+        cycle_duration_df = cycle_stats[cycle_stats["cycle_duration"].notna()]
+        efficiency_snapshot = _execution_efficiency_snapshot(cycle_metrics)
+        efficiency_series = _execution_efficiency_timeseries(cycle_metrics)
         st.subheader("Skips im Zeitverlauf")
         timeline_source = filtered[filtered["timestamp"].notna()].copy()
         detail_source: pd.DataFrame
@@ -1304,6 +1411,146 @@ def main() -> None:
             st.altair_chart(hourly_chart, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
+        st.subheader("Execution Efficiency")
+        if cycle_metrics.empty:
+            st.write("Keine Zyklus-Metriken für Validierungen/Executions vorhanden.")
+        else:
+            summary_cards = f"""
+            <div class="insight-summary">
+                <div class="insight-summary-card">
+                    <span>Signale pro Cycle</span>
+                    <strong>{efficiency_snapshot.get('signals') or '-'}</strong>
+                </div>
+                <div class="insight-summary-card">
+                    <span>Validierungsrate</span>
+                    <strong>{_format_rate(efficiency_snapshot.get('validation_rate'))}</strong>
+                </div>
+                <div class="insight-summary-card">
+                    <span>Executionrate</span>
+                    <strong>{_format_rate(efficiency_snapshot.get('execution_rate'))}</strong>
+                </div>
+                <div class="insight-summary-card">
+                    <span>Duplikate</span>
+                    <strong>{_format_rate(efficiency_snapshot.get('duplicate_rate'))}</strong>
+                </div>
+            </div>
+            """
+            st.markdown(summary_cards, unsafe_allow_html=True)
+            melted = (
+                efficiency_series
+                .melt(
+                    id_vars="timestamp",
+                    value_vars=["cycle_validated", "cycle_executed", "cycle_duplicates"],
+                    var_name="Metric",
+                    value_name="Anzahl",
+                )
+                .query("Anzahl > 0")
+            )
+            if not melted.empty:
+                efficiency_chart = (
+                    alt.Chart(melted)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("timestamp:T", title="Zeit"),
+                        y=alt.Y("Anzahl:Q", title="Zahl der Signale"),
+                        color=alt.Color("Metric:N", title="Metric"),
+                        tooltip=["timestamp:T", "Metric:N", "Anzahl:Q"],
+                    )
+                    .properties(height=320)
+                )
+                efficiency_chart = _apply_chart_theme(efficiency_chart)
+                st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
+                st.altair_chart(efficiency_chart, width="stretch")
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.write("Keine Trenddaten für die Execution-Metriken verfügbar.")
+            rate_trends = efficiency_series.copy()
+            rate_trends = rate_trends[rate_trends["cycle_signals"] > 0]
+            rate_trends = rate_trends.assign(
+                validation_rate=rate_trends["cycle_validated"] / rate_trends["cycle_signals"],
+                execution_rate=rate_trends["cycle_executed"] / rate_trends["cycle_validated"].replace(0, 1),
+                duplicate_rate=rate_trends["cycle_duplicates"] / rate_trends["cycle_signals"],
+            )
+            rate_melted = (
+                rate_trends
+                .melt(
+                    id_vars="timestamp",
+                    value_vars=["validation_rate", "execution_rate", "duplicate_rate"],
+                    var_name="Rate",
+                    value_name="Wert",
+                )
+                .dropna()
+            )
+            if not rate_melted.empty:
+                rate_chart = (
+                    alt.Chart(rate_melted)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("timestamp:T", title="Zeit"),
+                        y=alt.Y("Wert:Q", title="Quote", axis=alt.Axis(format=".0%")),
+                        color=alt.Color("Rate:N", title="Quote"),
+                        tooltip=["timestamp:T", "Rate:N", alt.Tooltip("Wert:Q", format=".2f")],
+                    )
+                    .properties(height=280)
+                )
+                rate_chart = _apply_chart_theme(rate_chart)
+                st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
+                st.altair_chart(rate_chart, width="stretch")
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.write("Keine Rate-Daten verfügbar.")
+
+        st.subheader("Exposure-Verlauf")
+        exposure_timeline = filtered[filtered["exposure_pct"].notna() & filtered["timestamp"].notna()].copy()
+        if exposure_timeline.empty:
+            st.write("Keine Exposure-Daten aus den Logs verfügbar.")
+        else:
+            exposure_timeline = exposure_timeline.sort_values("timestamp")
+            exposure_chart = (
+                alt.Chart(exposure_timeline)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("timestamp:T", title="Zeit"),
+                    y=alt.Y("exposure_pct:Q", title="Exponierung (% vom Konto)"),
+                    color=alt.Color("symbol:N", title="Symbol", legend=alt.Legend(orient="bottom")),
+                    tooltip=["timestamp:T", alt.Tooltip("exposure_pct:Q", format=".2f"), "symbol"],
+                )
+                .properties(height=250)
+            )
+            exposure_chart = _apply_chart_theme(exposure_chart)
+            st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
+            st.altair_chart(exposure_chart, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
+            latest_exposure = exposure_timeline.iloc[-1]
+            exp_cols = st.columns(3)
+            exp_balance = latest_exposure.get("balance")
+            exp_exposure = latest_exposure.get("exposure")
+            exp_drawdown = latest_exposure.get("drawdown")
+            exp_cols[0].metric("Letzte Balance", f"{exp_balance:.2f}" if pd.notna(exp_balance) else "-")
+            exp_cols[1].metric("Exponierung", f"{exp_exposure:.2f}" if pd.notna(exp_exposure) else "-", f"{latest_exposure.get('exposure_pct'):.2f}%" if pd.notna(latest_exposure.get('exposure_pct')) else "")
+            exp_cols[2].metric("Drawdown", f"{exp_drawdown:.2f}%" if pd.notna(exp_drawdown) else "-")
+
+        st.subheader("Confidence vs. Price Gap")
+        correlation_df = filtered[(filtered["confidence_gap"].notna()) & (filtered["price_gap"].notna())]
+        if correlation_df.empty:
+            st.write("Keine ausreichenden Confidence/Price Gap-Daten verfügbar.")
+        else:
+            correlation_chart = (
+                alt.Chart(correlation_df)
+                .mark_circle(size=70, opacity=0.7)
+                .encode(
+                    x=alt.X("confidence_gap:Q", title="Confidence Gap"),
+                    y=alt.Y("price_gap:Q", title="Price Gap"),
+                    color=alt.Color("category:N", title="Kategorie"),
+                    tooltip=["symbol", "category", alt.Tooltip("confidence_gap:Q", format=".3f"), alt.Tooltip("price_gap:Q", format=".3f")],
+                )
+                .properties(height=320)
+            )
+            correlation_chart = _apply_chart_theme(correlation_chart)
+            st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
+            st.altair_chart(correlation_chart, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
+
         st.subheader("Kategorie-Anteile")
         category_counts = filtered[filtered["category"].notna()]["category"].fillna("Unbekannt").astype(str)
         if category_counts.empty:
@@ -1329,12 +1576,11 @@ def main() -> None:
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.subheader("Cycle-Dauer")
-        cycle_df = filtered[(filtered["symbol"] == "cycle") & filtered["cycle_duration"].notna()]
-        if cycle_df.empty:
+        if cycle_duration_df.empty:
             st.write("Keine Cycle-Daten mit Dauerangabe verfügbar.")
         else:
             cycle_chart = (
-                alt.Chart(cycle_df)
+                alt.Chart(cycle_duration_df)
                 .mark_line(point=True)
                 .encode(
                     x=alt.X("timestamp:T", title="Zeit"),

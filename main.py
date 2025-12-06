@@ -203,12 +203,25 @@ def main() -> None:
     try:
         while True:
             summary = runner.run_cycle(symbols, args.dry_run)
+            validation_rate = summary.validated_signals / summary.total_signals if summary.total_signals else 0.0
+            execution_rate = summary.executed_trades / summary.validated_signals if summary.validated_signals else 0.0
+            duplicate_rate = summary.duplicate_signals / summary.total_signals if summary.total_signals else 0.0
             log_live(
                 "cycle",
                 (
                     f"Cycle #{summary.index} summary: Symbols={summary.symbols_processed} Signals={summary.total_signals} "
                     f"Validated={summary.validated_signals} Executed={summary.executed_trades} "
-                    f"Duplicates={summary.duplicate_signals} Dauer={summary.duration_seconds:.2f}s DryRun={summary.dry_run}"
+                    f"Duplicates={summary.duplicate_signals} ValidationRate={validation_rate:.3f} "
+                    f"ExecutionRate={execution_rate:.3f} DuplicateRate={duplicate_rate:.3f} "
+                    f"Dauer={summary.duration_seconds:.2f}s DryRun={summary.dry_run}"
+                ),
+            )
+            exposure_stats = manager.report_cycle_metrics()
+            log_live(
+                "cycle",
+                (
+                    f"Balance={exposure_stats['balance']:.2f} Exposure={exposure_stats['exposure']:.2f} "
+                    f"ExposurePct={exposure_stats['exposure_pct']:.2f}% Drawdown={exposure_stats['drawdown']:.2f}%"
                 ),
             )
             if segment_writer:
