@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FMMUC Secure Login</title>
+    <link rel="stylesheet" href="1.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="board">
+        <article class="hero">
+          <p class="hero-kicker">FMMUC Secure Dashboard</p>
+          <h1>Wilkommen zurück – Ihr persönlicher Bereich ist sicher.</h1>
+          <p class="hero-description">
+            Der persönliche Zugang bleibt auf derselben Seite, bleibt dafür aber hochsicher
+            und speziell für Ihren Bereich konfiguriert.
+          </p>
+          <div class="hero-meta">
+            <div>
+              <span class="meta-label">Logsegmente</span>
+              <strong>3 verfügbar</strong>
+            </div>
+            <div>
+              <span class="meta-label">Letzte Aktualisierung</span>
+              <strong>Jetzt</strong>
+            </div>
+            <div>
+              <span class="meta-label">Letzte Cycle-Dauer</span>
+              <strong>2.6s</strong>
+            </div>
+          </div>
+        </article>
+        <article class="form-card">
+          <header class="form-header">
+            <p class="form-subtitle">Ihr gesicherter Zugang</p>
+            <h2>FMMUC Login</h2>
+          </header>
+          <form class="login-form">
+            <label>
+              <span>Ihr FMMUC Login</span>
+              <input type="email" name="login" placeholder="name@fmmuc.com" required />
+            </label>
+            <label>
+              <span>Ihr Passwort</span>
+              <input type="password" name="password" placeholder="••••••••" required />
+            </label>
+            <label>
+              <span>Ihr Auth-Passwort</span>
+              <input
+                type="password"
+                name="auth"
+                placeholder="Applikationscode"
+                autocomplete="one-time-code"
+                required
+              />
+            </label>
+            <label>
+              <span>Ihr TOTP-Code</span>
+              <input type="text" name="totp" placeholder="123456" maxlength="6" required />
+            </label>
+            <label>
+              <span>Abteilung</span>
+              <select name="department" required>
+                <option value="Research">Research</option>
+                <option value="Quantitative Investments">Quantitative Investments</option>
+                <option value="Asset Management">Asset Management</option>
+                <option value="M&A">M&amp;A</option>
+                <option value="Macroeconomics">Macroeconomics</option>
+              </select>
+            </label>
+            <button type="submit">Anmelden</button>
+          </form>
+          <p class="support-note">
+            Bei Rückfragen wenden Sie sich an die IT oder Herrn Bierling.
+          </p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

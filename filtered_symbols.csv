@@ -181,8 +181,6 @@ DPZ.NAS;Domino's Pizza;Stock CFD's\Nasdaq\DPZ.NAS;USD;USD;3;1.0;0;Ja
 SBLX.NAS;STABLEX TECHNOLOGIES INC;Stock CFD's\Nasdaq\SBLX.NAS;USD;USD;3;1.0;0;Ja
 BBT.NYSE;Berkshire Hills Bancorp Inc;Stock CFD's\NYSE\BBT.NYSE;USD;USD;2;1.0;1;Ja
 Sugar_H6;Sugar -March 26 CFD;Commodities\Softs\Sugar_H6;USD;USD;2;100.0;5;Ja
-UKGB_H6;UK Long Gilt -March 26 CFD;Bonds CFDs\UKGB_H6;USD;GBP;2;100.0;3;Ja
-UST30Y_H6;US T-Bond 30 YR-March 26 CFD;Bonds CFDs\UST30Y_H6;USD;USD;2;100.0;4;Ja
 BRENT_G6;Crude Oil Brent -February 26 CFD;Commodities\Energies\Energies Futures\BRENT_G6;USD;USD;2;100.0;3;Ja
 WTI_F6;US Crude Oil -January 26 CFD;Commodities\Energies\Energies Futures\WTI_F6;USD;USD;2;100.0;3;Ja
 DRH.NAS;DiamondRock Hospitality Co;Stock CFD's\Nasdaq\DRH.NAS;USD;USD;3;1.0;0;Ja
