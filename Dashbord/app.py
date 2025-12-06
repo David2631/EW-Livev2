@@ -1335,7 +1335,22 @@ def main() -> None:
         if reason_counts.empty:
             st.write("Keine Skip-Gründe für die Auswahl.")
         else:
-            st.bar_chart(reason_counts, x="Kategorie", y="Anzahl")
+            reason_counts = reason_counts.sort_values("Anzahl", ascending=True)
+            reason_chart = (
+                alt.Chart(reason_counts)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Anzahl:Q", title="Anzahl Skips"),
+                    y=alt.Y("Kategorie:N", sort="-x", title="Kategorie"),
+                    tooltip=["Kategorie", "Anzahl:Q"],
+                    color=alt.Color("Kategorie:N", legend=None),
+                )
+                .properties(height=260)
+            )
+            reason_chart = _apply_chart_theme(reason_chart)
+            st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
+            st.altair_chart(reason_chart, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
 
     with insights_tab:
         cycle_stats = filtered[filtered["symbol"] == "cycle"]
@@ -1343,6 +1358,18 @@ def main() -> None:
         cycle_duration_df = cycle_stats[cycle_stats["cycle_duration"].notna()]
         efficiency_snapshot = _execution_efficiency_snapshot(cycle_metrics)
         efficiency_series = _execution_efficiency_timeseries(cycle_metrics)
+        total_entries = len(filtered)
+        total_symbols = int(filtered["symbol"].nunique()) if not filtered.empty else 0
+        active_categories = int(filtered["category"].nunique()) if not filtered.empty else 0
+        cycle_percentage = 0.0
+        if total_entries:
+            cycle_percentage = (len(cycle_stats) / total_entries) * 100
+        last_cycle_signals = efficiency_snapshot.get("signals")
+        overview_cols = st.columns(4)
+        overview_cols[0].metric("Logeinträge", f"{total_entries}", "nach Filtern")
+        overview_cols[1].metric("Aktive Symbole", f"{total_symbols}", "im aktuellen Satz")
+        overview_cols[2].metric("Aktive Kategorien", f"{active_categories}")
+        overview_cols[3].metric("Cycle-Anteil", f"{cycle_percentage:.0f}%", f"Letzte Signale: {last_cycle_signals or '-'}")
         st.subheader("Skips im Zeitverlauf")
         timeline_source = filtered[filtered["timestamp"].notna()].copy()
         detail_source: pd.DataFrame
@@ -1595,21 +1622,23 @@ def main() -> None:
             st.altair_chart(cycle_chart, width="stretch")
 
         st.subheader("Top-Symbole nach Skips")
-        top_symbols = (
-            filtered.groupby(["symbol", "category"])
-            .size()
-            .reset_index(name="Anzahl")
-            .sort_values("Anzahl", ascending=False)
-            .head(15)
-        )
-        if top_symbols.empty:
-            st.write("Keine Daten für die aktuelle Auswahl.")
-        else:
-            st.dataframe(top_symbols, width="stretch", hide_index=True)
+        with st.expander("Top-Symbole und Kategorien anzeigen", expanded=True):
+            top_symbols = (
+                filtered.groupby(["symbol", "category"])
+                .size()
+                .reset_index(name="Anzahl")
+                .sort_values("Anzahl", ascending=False)
+                .head(15)
+            )
+            if top_symbols.empty:
+                st.write("Keine Daten für die aktuelle Auswahl.")
+            else:
+                st.dataframe(top_symbols, width="stretch", hide_index=True)
 
         st.subheader("Symbol/Kategorie Heatmap")
+        heat_limit = st.slider("Heatmap - max. Einträge", min_value=50, max_value=400, value=200, step=50, key="heatmap_limit")
         heat_data = (
-            filtered.groupby(["symbol", "category"]).size().reset_index(name="Anzahl").sort_values("Anzahl", ascending=False).head(200)
+            filtered.groupby(["symbol", "category"]).size().reset_index(name="Anzahl").sort_values("Anzahl", ascending=False).head(heat_limit)
         )
         if heat_data.empty:
             st.write("Keine Daten verfügbar.")
