@@ -670,6 +670,7 @@ class OrderManager:
         balance = self._refresh_account_balance()
         exposure = self._current_gross_exposure()
         drawdown = self._drawdown_percent(balance)
+        drawdown = abs(drawdown)
         exposure_pct = (exposure / balance * 100.0) if balance and balance > 0 else 0.0
         return {
             "balance": balance,

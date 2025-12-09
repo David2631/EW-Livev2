@@ -1001,6 +1001,20 @@ def _timeline_frequency(span: pd.Timedelta) -> str:
     return "1D"
 
 
+def _aggregate_rate_series(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    span = df["timestamp"].max() - df["timestamp"].min()
+    freq = _timeline_frequency(span) if span > pd.Timedelta(0) else "1T"
+    aggregated = (
+        df.assign(timestamp=df["timestamp"].dt.floor(freq))
+        .groupby(["timestamp", "Rate"], as_index=False)["Wert"]
+        .mean()
+    )
+    aggregated["Wert"] = aggregated["Wert"].clip(0.0, 1.0)
+    return aggregated
+
+
 def _render_login_screen(initial_secret: Optional[str]) -> None:
     st.header("Gesicherter Zugriff")
     st.caption("Bitte melde dich mit deinem @fmmuc.com-Account, Passwort und TOTP-Code an.")
@@ -1508,8 +1522,8 @@ def main() -> None:
                     var_name="Rate",
                     value_name="Wert",
                 )
-                .dropna()
             )
+            rate_melted = _aggregate_rate_series(rate_melted.dropna(subset=["Wert"]))
             if not rate_melted.empty:
                 rate_chart = (
                     alt.Chart(rate_melted)
