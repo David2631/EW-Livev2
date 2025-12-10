@@ -390,6 +390,29 @@ class OrderManager:
         else:
             logger.info(f"[{symbol}] Filling-Versuche: {summary}")
 
+    def _log_volume_insight(
+        self,
+        symbol: str,
+        signal: EntrySignal,
+        lots: float,
+        risk_amount: float,
+        exposure_value: float,
+        trend_scale: float,
+        dd_multiplier: float,
+        vol_multiplier: float,
+        prob_scale: float,
+        direction_factor: float,
+        stop_distance: float,
+    ) -> None:
+        setup = signal.setup or "unknown"
+        entry_tf = (signal.entry_tf or "unknown").upper()
+        logger.info(
+            f"[{symbol}] Exposure decision: setup={setup} tf={entry_tf} lots={lots:.3f} risk={risk_amount:.2f} "
+            f"exposure_decision={exposure_value:.2f} trend_scale={trend_scale:.3f} dd_mult={dd_multiplier:.3f} "
+            f"vol_mult={vol_multiplier:.3f} prob_scale={prob_scale:.3f} short_factor={direction_factor:.3f} "
+            f"stop_dist={stop_distance:.5f}"
+        )
+
     def adjust_for_cycle(self, stats: ExecutionCycleStats) -> None:
         if stats.signals_received <= 0:
             return
@@ -783,15 +806,20 @@ class OrderManager:
             risk_per_lot = stop_distance
         lots = (risk_amount / risk_per_lot) if risk_per_lot else self.cfg.min_lot
         lots *= self.cfg.lot_size_per_risk_point
+        prob_scale = 1.0
         if self.cfg.size_by_prob:
             probability = float(signal.confidence or 0.0)
             base_thr = max(0.5, self.cfg.ml_probability_threshold)
             frac = max(0.0, (probability - base_thr) / max(1e-6, 1.0 - base_thr))
             scale = self.cfg.prob_size_min + (self.cfg.prob_size_max - self.cfg.prob_size_min) * frac
             lots *= scale
+            prob_scale = scale
+        direction_factor = 1.0
         if signal.direction == Dir.DOWN:
-            lots *= self.cfg.size_short_factor
-        lots *= self._dynamic_trend_scale(signal)
+            direction_factor = self.cfg.size_short_factor
+            lots *= direction_factor
+        trend_scale = self._dynamic_trend_scale(signal)
+        lots *= trend_scale
         lots = max(self.cfg.min_lot, lots)
         lots = min(lots, self.cfg.max_lot)
         if self.cfg.max_gross_exposure_pct > 0:
@@ -801,6 +829,20 @@ class OrderManager:
                 return 0.0, 0.0, risk_per_lot, stop_distance
         lots = self._align_with_symbol_constraints(symbol, info, lots)
         risk_amount = risk_per_lot * lots
+        exposure_value = self._exposure_value(symbol, lots, entry_price, info)
+        self._log_volume_insight(
+            symbol,
+            signal,
+            lots,
+            risk_amount,
+            exposure_value,
+            trend_scale,
+            dd_multiplier,
+            vol_multiplier,
+            prob_scale,
+            direction_factor,
+            stop_distance,
+        )
         return lots, risk_amount, risk_per_lot, stop_distance
 
     def _exposure_limit_allowance(self, balance: float) -> float:

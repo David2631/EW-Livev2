@@ -332,41 +332,6 @@ def _inject_dashboard_styles() -> None:
             letter-spacing: 0.2em;
             text-transform: uppercase;
         }
-        .insight-card strong {
-            display: block;
-            font-size: 1.25rem;
-            color: var(--accent-strong);
-        }
-        .insight-summary {
-            margin-top: 1rem;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 0.9rem;
-        }
-        .insight-summary-card {
-            padding: 1rem;
-            border-radius: 14px;
-            background: rgba(15, 24, 44, 0.9);
-            border: 1px solid rgba(126, 225, 255, 0.2);
-            box-shadow: 0 12px 40px rgba(2, 2, 17, 0.8);
-        }
-        .insight-summary-card strong {
-            display: block;
-            font-size: 1.5rem;
-            color: var(--accent);
-        }
-        .insight-summary-card span {
-            color: var(--text-muted);
-            font-size: 0.8rem;
-            letter-spacing: 0.15em;
-            text-transform: uppercase;
-        }
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 16px;
-        }
         .status-card {
             padding: 18px 22px;
             border-radius: 18px;
@@ -579,6 +544,13 @@ def _extract_metrics(message: str) -> dict:
         "balance": None,
         "exposure": None,
         "drawdown": None,
+        "lot_size": None,
+        "trend_scale": None,
+        "dd_multiplier": None,
+        "vol_multiplier": None,
+        "prob_scale": None,
+        "exposure_value": None,
+        "risk_amount": None,
     }
 
     cr_match = CR_PATTERN.search(message)
@@ -655,6 +627,14 @@ def _extract_metrics(message: str) -> dict:
         basis_value = exposure_match.group(3)
         if basis_value:
             data["exposure_basis"] = basis_value.strip()
+
+    data["lot_size"] = _extract_numeric(message, "lots")
+    data["trend_scale"] = _extract_numeric(message, "trend_scale")
+    data["dd_multiplier"] = _extract_numeric(message, "dd_mult")
+    data["vol_multiplier"] = _extract_numeric(message, "vol_mult")
+    data["prob_scale"] = _extract_numeric(message, "prob_scale")
+    data["exposure_value"] = _extract_numeric(message, "exposure_decision")
+    data["risk_amount"] = _extract_numeric(message, "risk")
 
     return data
 
@@ -852,6 +832,12 @@ def _insight_metrics(filtered: pd.DataFrame) -> dict[str, Any]:
     insights["exposure_pct"] = (
         float(exposure.dropna().max()) if isinstance(exposure, pd.Series) and not exposure.dropna().empty else None
     )
+    trend_scale_series = filtered.get("trend_scale")
+    trend_clean = trend_scale_series.dropna() if isinstance(trend_scale_series, pd.Series) else pd.Series(dtype=float)
+    insights["trend_scale"] = float(trend_clean.mean()) if not trend_clean.empty else None
+    lot_series = filtered.get("lot_size")
+    lot_clean = lot_series.dropna() if isinstance(lot_series, pd.Series) else pd.Series(dtype=float)
+    insights["lot_size"] = float(lot_clean.mean()) if not lot_clean.empty else None
     insights["active_symbols"] = int(filtered["symbol"].nunique()) if not filtered.empty else 0
     return insights
 
@@ -928,6 +914,16 @@ def _render_pipeline_hero(
             <span class=\"context\">Avg. Confidence Gap</span>
             <strong>{_format_insight_value(insights.get('confidence_gap'))}</strong>
             <span class=\"context\">Signalqualität</span>
+        </div>
+        <div class="insight-card">
+            <span class="context">Trend Scale</span>
+            <strong>{_format_insight_value(insights.get('trend_scale'), precision=2)}</strong>
+            <span class="context">Sizing-Multiplikator</span>
+        </div>
+        <div class="insight-card">
+            <span class="context">Ø Lots</span>
+            <strong>{_format_insight_value(insights.get('lot_size'), precision=3)}</strong>
+            <span class="context">Nach Anpassungen</span>
         </div>
         <div class=\"insight-card\">
             <span class=\"context\">Avg. Price Gap</span>
@@ -1250,7 +1246,7 @@ def main() -> None:
         cycles["timestamp"].dropna().max() if not cycles["timestamp"].dropna().empty else None
     )
     cycles_snapshot = _cycle_snapshot(cycles)
-    insight_metrics = _insight_metrics(filtered)
+    insights = _insight_metrics(filtered)
     freshness_label = "unbekannt"
     if last_segment_ts:
         delta = pd.Timestamp.now(tz="UTC") - last_segment_ts
@@ -1264,7 +1260,7 @@ def main() -> None:
             freshness_label,
             last_cycle_time,
             cycles_snapshot,
-            insight_metrics,
+            insights,
         )
     status_cards = [
         ("Letzte Logaktualisierung", _format_timestamp(last_segment_ts), freshness_label),
@@ -1458,27 +1454,39 @@ def main() -> None:
         if cycle_metrics.empty:
             st.write("Keine Zyklus-Metriken für Validierungen/Executions vorhanden.")
         else:
-            summary_cards = f"""
-            <div class="insight-summary">
-                <div class="insight-summary-card">
-                    <span>Signale pro Cycle</span>
-                    <strong>{efficiency_snapshot.get('signals') or '-'}</strong>
+            insight_cards = f"""
+                <div class="insight-card">
+                    <span class="context">Avg. Confidence Gap</span>
+                    <strong>{_format_insight_value(insights.get('confidence_gap'))}</strong>
+                    <span class="context">Signalqualität</span>
                 </div>
-                <div class="insight-summary-card">
-                    <span>Validierungsrate</span>
-                    <strong>{_format_rate(efficiency_snapshot.get('validation_rate'))}</strong>
+                <div class="insight-card">
+                    <span class="context">Avg. Price Gap</span>
+                    <strong>{_format_insight_value(insights.get('price_gap'))}</strong>
+                    <span class="context">Marktversatz</span>
                 </div>
-                <div class="insight-summary-card">
-                    <span>Executionrate</span>
-                    <strong>{_format_rate(efficiency_snapshot.get('execution_rate'))}</strong>
+                <div class="insight-card">
+                    <span class="context">Max. Exponierung</span>
+                    <strong>{_format_insight_value(insights.get('exposure_pct'), precision=1, suffix='%')}</strong>
+                    <span class="context">Kontolimit</span>
                 </div>
-                <div class="insight-summary-card">
-                    <span>Duplikate</span>
-                    <strong>{_format_rate(efficiency_snapshot.get('duplicate_rate'))}</strong>
+                <div class="insight-card">
+                    <span class="context">Aktive Symbole</span>
+                    <strong>{int(insights.get('active_symbols') or 0)}</strong>
+                    <span class="context">Abgedeckte Märkte</span>
                 </div>
-            </div>
-            """
-            st.markdown(summary_cards, unsafe_allow_html=True)
+                <div class="insight-card">
+                    <span class="context">Trend Scale</span>
+                    <strong>{_format_insight_value(insights.get('trend_scale'), precision=2)}</strong>
+                    <span class="context">Sizing-Multiplikator</span>
+                </div>
+                <div class="insight-card">
+                    <span class="context">Ø Lots</span>
+                    <strong>{_format_insight_value(insights.get('lot_size'), precision=3)}</strong>
+                    <span class="context">Nach Anpassungen</span>
+                </div>
+                """
+            st.markdown(f'<div class="insight-grid">{insight_cards}</div>', unsafe_allow_html=True)
             melted = (
                 efficiency_series
                 .melt(
@@ -1542,6 +1550,79 @@ def main() -> None:
                 st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.write("Keine Rate-Daten verfügbar.")
+
+        st.subheader("Dynamic Sizing Trends")
+        sizing_fields = ["trend_scale", "dd_multiplier", "vol_multiplier", "prob_scale"]
+        sizing_source = filtered[filtered["timestamp"].notna()].copy()
+        sizing_melt = (
+            sizing_source
+            .melt(
+                id_vars="timestamp",
+                value_vars=sizing_fields,
+                var_name="Metric",
+                value_name="Wert",
+            )
+            .dropna(subset=["Wert"])
+        )
+        if sizing_melt.empty:
+            st.write("Keine Daten zu Trend-/Volumen-Multiplikatoren verfügbar.")
+        else:
+            sizing_chart = (
+                alt.Chart(sizing_melt)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("timestamp:T", title="Zeit"),
+                    y=alt.Y("Wert:Q", title="Multiplikator"),
+                    color=alt.Color("Metric:N", title="Metrik"),
+                    tooltip=["timestamp:T", "Metric:N", alt.Tooltip("Wert:Q", format=".2f")],
+                )
+                .properties(height=260)
+            )
+            sizing_chart = _apply_chart_theme(sizing_chart)
+            st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
+            st.altair_chart(sizing_chart, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        st.subheader("Lot-Größen-Verteilung")
+        lot_df = filtered[filtered["lot_size"].notna()]
+        if lot_df.empty:
+            st.write("Keine Lotgrößen-Daten für die aktuellen Skips.")
+        else:
+            lot_hist = (
+                alt.Chart(lot_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("lot_size:Q", bin=alt.Bin(maxbins=25), title="Lot-Größe"),
+                    y=alt.Y("count():Q", title="Anzahl"),
+                    tooltip=[alt.Tooltip("count():Q", title="Anzahl")],
+                )
+                .properties(height=220)
+            )
+            lot_hist = _apply_chart_theme(lot_hist)
+            st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
+            st.altair_chart(lot_hist, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        st.subheader("Trend Scale vs. Exposure Decision")
+        scatter_df = filtered[(filtered["trend_scale"].notna()) & (filtered["exposure_value"].notna())]
+        if scatter_df.empty:
+            st.write("Keine kombinierten Trend/Exposure-Daten für die Visualisierung.")
+        else:
+            scatter = (
+                alt.Chart(scatter_df)
+                .mark_circle(size=60, opacity=0.8)
+                .encode(
+                    x=alt.X("trend_scale:Q", title="Trend Scale"),
+                    y=alt.Y("exposure_value:Q", title="Exponierung"),
+                    color=alt.Color("symbol:N", title="Symbol", legend=alt.Legend(orient="bottom")),
+                    tooltip=["symbol", alt.Tooltip("trend_scale:Q", format=".2f"), alt.Tooltip("exposure_value:Q", format=".2f"), "category"],
+                )
+                .properties(height=260)
+            )
+            scatter = _apply_chart_theme(scatter)
+            st.markdown('<div class="insight-panel chart-panel">', unsafe_allow_html=True)
+            st.altair_chart(scatter, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.subheader("Exposure-Verlauf")
         exposure_timeline = filtered[filtered["exposure_pct"].notna() & filtered["timestamp"].notna()].copy()
