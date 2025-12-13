@@ -5,7 +5,7 @@ import io
 import re
 import secrets
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -18,6 +18,27 @@ import streamlit as st
 
 # Configure Streamlit page early so the layout matches the dashboard use case.
 st.set_page_config(page_title="EW Live Dashboard", layout="wide")
+
+
+# Streamlit bot noise workaround: swallow missing media requests (e.g. wp-includes/wlwmanifest.xml)
+try:
+    from streamlit.runtime.media_file_storage import MediaFileStorageError
+    from streamlit.web.server import media_file_handler as _mf_handler
+
+    _orig_validate = _mf_handler.MediaFileHandler.validate_absolute_path
+
+    def _safe_validate(self, absolute_path):  # type: ignore
+        try:
+            return _orig_validate(self, absolute_path)
+        except MediaFileStorageError:
+            # Ignore bot probes for non-existent files
+            if "wp-includes" in str(absolute_path):
+                return None
+            raise
+
+    _mf_handler.MediaFileHandler.validate_absolute_path = _safe_validate  # type: ignore
+except Exception:
+    pass
 
 DEFAULT_LOG = Path(__file__).resolve().parents[1] / "logs" / "live_execution.txt"
 REMOTE_SEGMENT_DIR = Path(r"C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments")
@@ -124,7 +145,7 @@ def _create_user(email: str, password: str, is_admin: bool = False, totp_secret:
                 salt.hex(),
                 totp_secret,
                 int(is_admin),
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
             ),
         )
     return totp_secret
@@ -1021,7 +1042,7 @@ def _render_login_screen(initial_secret: Optional[str]) -> None:
         _render_totp_qr(initial_secret, DEFAULT_ADMIN_EMAIL)
         st.session_state.initial_totp_secret_shown = True
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     lockout_until_ts = st.session_state.get("login_lockout_until")
     lockout_active = bool(lockout_until_ts and now.timestamp() < lockout_until_ts)
     if lockout_active:
@@ -1037,7 +1058,7 @@ def _render_login_screen(initial_secret: Optional[str]) -> None:
         submitted = st.form_submit_button("Anmelden", disabled=lockout_active)
 
     if submitted:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         lockout_until_ts = st.session_state.get("login_lockout_until")
         if lockout_until_ts and now.timestamp() < lockout_until_ts:
             wait_seconds = max(1, int(lockout_until_ts - now.timestamp()))
