@@ -185,7 +185,11 @@ def _ensure_default_admin() -> Optional[str]:
 
 def _ensure_emergency_account() -> None:
     _ensure_auth_table()
-    if _get_user(EMERGENCY_EMAIL):
+    user = _get_user(EMERGENCY_EMAIL)
+    if user:
+        if user.get("is_admin"):
+            with _get_auth_connection() as conn:
+                conn.execute("UPDATE users SET is_admin = 0 WHERE email = ?", (EMERGENCY_EMAIL,))
         return
     _create_user(EMERGENCY_EMAIL, EMERGENCY_PASSWORD, is_admin=False)
 
