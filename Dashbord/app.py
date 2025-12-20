@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
+import json
 import re
 import secrets
 import sqlite3
@@ -40,7 +42,12 @@ try:
 except Exception:
     pass
 
-DEFAULT_LOG = Path(__file__).resolve().parents[1] / "logs" / "live_execution.txt"
+DEFAULT_LOG = Path(__file__).resolve().parents[1] / "logs" / "live_execution.log"
+STRUCT_LOG_CANDIDATES = [
+    Path(__file__).resolve().parents[1] / "struct.log",
+    Path(__file__).resolve().parents[1] / "logs" / "struct.log",
+    Path(__file__).resolve().parents[1] / "Ergebnisse" / "struct.log",
+]
 REMOTE_SEGMENT_DIR = Path(r"C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments")
 LOCAL_SEGMENT_DIR = Path(__file__).resolve().parents[1] / "logs" / "segments"
 RESULTS_SEGMENT_DIR = Path(__file__).resolve().parents[1] / "Ergebnisse" / "segments"
@@ -101,6 +108,16 @@ def _default_segment_dir() -> Path:
         except (OSError, PermissionError):
             continue
     raise FileNotFoundError("Keine Logsegment-Quelle verfügbar")
+
+
+def _default_log_source() -> Path:
+    for candidate in STRUCT_LOG_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    try:
+        return _default_segment_dir()
+    except FileNotFoundError:
+        return STRUCT_LOG_CANDIDATES[0]
 
 
 def _get_auth_connection() -> sqlite3.Connection:
@@ -440,7 +457,8 @@ def load_log_entries(log_path: str, max_files: Optional[int]) -> pd.DataFrame:
 
     entries: List[dict] = []
     for file_path in files:
-        with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+        opener = gzip.open if file_path.suffix == ".gz" else open
+        with opener(file_path, "rt", encoding="utf-8", errors="ignore") as handle:
             for raw_line in handle:
                 line = raw_line.strip()
                 if not line or line.startswith("PS "):
@@ -455,6 +473,12 @@ def load_log_entries(log_path: str, max_files: Optional[int]) -> pd.DataFrame:
 
 
 def _parse_log_line(line: str) -> Optional[dict]:
+    json_payload = _try_parse_json(line)
+    if json_payload:
+        struct = _parse_struct_event(json_payload)
+        if struct:
+            return struct
+
     parts = line.split(" ", 2)
     if len(parts) != 3 or not _looks_like_timestamp(parts[0]):
         metrics = _extract_metrics(line)
@@ -498,6 +522,76 @@ def _parse_log_line(line: str) -> Optional[dict]:
         "category": _classify_message(message, symbol),
         **metrics,
     }
+
+
+def _try_parse_json(line: str) -> Optional[dict]:
+    if not line.startswith("{"):
+        return None
+    try:
+        data = json.loads(line)
+        return data if isinstance(data, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _parse_struct_event(payload: dict) -> Optional[dict]:
+    code = payload.get("code")
+    if not code:
+        return None
+    ts_raw = payload.get("ts") or payload.get("timestamp")
+    timestamp = pd.to_datetime(ts_raw, utc=True, errors="coerce") if ts_raw else pd.NaT
+    symbol = payload.get("symbol") or payload.get("sym") or "sys"
+    base = {
+        "timestamp": timestamp,
+        "level": payload.get("level", "INFO"),
+        "symbol": symbol,
+        "message": payload.get("message") or str(code),
+        "category": str(code),
+    }
+
+    lower_code = str(code).lower()
+    if lower_code == "cycle_summary":
+        base.update(
+            {
+                "cycle_signals": payload.get("signals"),
+                "cycle_validated": payload.get("validated"),
+                "cycle_executed": payload.get("executed"),
+                "cycle_duplicates": payload.get("duplicates"),
+                "validation_rate": payload.get("validation_rate"),
+                "execution_rate": payload.get("execution_rate"),
+                "duplicate_rate": payload.get("duplicate_rate"),
+                "cycle_duration": payload.get("duration"),
+                "balance": payload.get("balance"),
+                "exposure": payload.get("exposure"),
+                "exposure_pct": payload.get("exposure_pct"),
+                "drawdown": payload.get("drawdown"),
+            }
+        )
+    elif lower_code == "cycle_exposure":
+        base.update(
+            {
+                "balance": payload.get("balance"),
+                "exposure": payload.get("exposure"),
+                "exposure_pct": payload.get("exposure_pct"),
+                "drawdown": payload.get("drawdown"),
+            }
+        )
+    elif lower_code == "symbol_signals":
+        base.update(
+            {
+                "cycle_signals": payload.get("signals"),
+                "cycle_validated": payload.get("validated"),
+                "cycle_executed": payload.get("executed"),
+                "cycle_duplicates": payload.get("duplicates"),
+            }
+        )
+        last_entry = payload.get("last_entry")
+        if isinstance(last_entry, dict):
+            base.update({f"last_{k}": v for k, v in last_entry.items()})
+    else:
+        base.update({k: v for k, v in payload.items() if k not in {"ts", "timestamp", "code"}})
+
+    return base
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -1185,11 +1279,11 @@ def main() -> None:
         st.warning("Bitte bestätige zuerst den Hinweis, um das Dashboard zu verwenden.")
         return
 
-    log_path = str(_default_segment_dir())
+    log_path = str(_default_log_source())
     st.sidebar.header("Logquelle")
-    st.sidebar.caption("Quelle ist fest auf den Segment-Ordner eingestellt.")
+    st.sidebar.caption("Liest strukturierte Logs (struct.log) falls vorhanden, sonst den Segment-Ordner.")
     st.sidebar.code(log_path, language="text")
-    st.sidebar.caption("Alle verfügbaren Dateien im Ordner werden automatisch analysiert.")
+    st.sidebar.caption("Alle verfügbaren Dateien im Pfad werden automatisch analysiert (inkl. .gz-Rotationen).")
     force_refresh = st.sidebar.button("Neu laden")
     if force_refresh:
         load_log_entries.clear()

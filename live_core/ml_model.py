@@ -1,4 +1,4 @@
-"""Hilfsmodul, um ML-Wahrscheinlichkeiten für Live-Signale einzuspeisen."""
+"""Hilfsmodul, um ML-Wahrscheinlichkeiten fÃ¼r Live-Signale einzuspeisen."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,7 +19,7 @@ class MLProbabilityEntry:
 
 
 class MLProbabilityProvider:
-    """Lädt Wahrscheinlichkeiten aus CSV/JSON-Dateien und liefert sie für Signale."""
+    """LÃ¤dt Wahrscheinlichkeiten aus CSV/JSON-Dateien und liefert sie fÃ¼r Signale."""
 
     _TIME_TOLERANCE = timedelta(minutes=3)
 

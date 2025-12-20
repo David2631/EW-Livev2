@@ -1,4 +1,4 @@
-"""Order-Manager für das Live-System, trifft Entscheidungen basierend auf Signalen."""
+"""Order-Manager fÃ¼r das Live-System, trifft Entscheidungen basierend auf Signalen."""
 from __future__ import annotations
 
 import hashlib
@@ -19,14 +19,17 @@ import certifi
 
 from .config import LiveConfig
 from .mt5_adapter import MetaTrader5Adapter
+from .order_store import OrderStore
 from .signals import Dir, EntrySignal
+from .risk_manager import RiskManager
+from .volatility_gate import VolatilityGate, VolatilityDecision
 
 logger = logging.getLogger("ew_live")
 
 
 @dataclass
 class ExecutionCycleStats:
-    signals_received: int = 0  # neue, im Zyklus berücksichtigte Signale (keine Duplikate)
+    signals_received: int = 0  # neue, im Zyklus berÃ¼cksichtigte Signale (keine Duplikate)
     validated_signals: int = 0
     duplicate_signals: int = 0
     executed_trades: int = 0
@@ -34,12 +37,13 @@ class ExecutionCycleStats:
 
 class OrderManager:
     SUCCESS_RETCODE = 10009
-    STOP_AFTER_RETCODES = {10017, 10018}
+    STOP_AFTER_RETCODES = {10017, 10018, 10033}
     LONG_ONLY_RETCODE = 10042
     SHORT_ONLY_RETCODE = 10043
     RETCODE_HINTS = {
         10007: "Invalid stops - Abstand liegt unter `trade_stops_level` oder Mindestabstand.",
         10030: "Unsupported filling mode - Broker akzeptiert andere `order_filling_mode`-Typen.",
+        10033: "Orders limit reached - Broker-Limit fÃ¼r offene/pendende Orders erreicht (bitte weniger Orders senden).",
     }
     _VALIDATION_TARGET_RATE = 0.65
     _MAX_DYNAMIC_SHIFT = 0.08
@@ -49,6 +53,10 @@ class OrderManager:
     def __init__(self, mt5_adapter: MetaTrader5Adapter, cfg: LiveConfig):
         self.adapter = mt5_adapter
         self.cfg = cfg
+        self.risk_manager = RiskManager(cfg)
+        self._order_store = OrderStore(cfg.order_store_path or "logs/orders.db")
+        self._volatility_gate = VolatilityGate(cfg)
+        self._vola_history_cache: dict[str, tuple[list[float], float]] = {}
         self._long_only_symbols: set[str] = set()
         self._short_only_symbols: set[str] = set()
         self._highest_balance: float = cfg.account_balance
@@ -69,12 +77,64 @@ class OrderManager:
         if self._webhook_fingerprint:
             logger.info(f"Webhook aktiviert (Fingerprint={self._webhook_fingerprint})")
 
+    def _struct_event(self, code: str, **payload: object) -> None:
+        struct_logger = logging.getLogger("ew_struct")
+        event = {"code": code, "ts": datetime.now(timezone.utc).isoformat()}
+        event.update(payload)
+        try:
+            struct_logger.info(json.dumps(event, ensure_ascii=False))
+        except Exception:
+            struct_logger.info("%s %s", code, payload)
+
+    def _apply_risk_manager_adjustment(
+        self, symbol: str, signal: EntrySignal, base_volume: float, info: Optional[Any] = None
+    ) -> float:
+        """Applies risk-manager sensitivity sizing to the base volume."""
+        if base_volume <= 0:
+            return base_volume
+
+        # Build a minimal market snapshot
+        market_data = {
+            "price": signal.entry_price,
+            "atr": getattr(signal, "atr", None),
+            "ema_fast": getattr(signal, "ema_fast", None),
+            "ema_slow": getattr(signal, "ema_slow", None),
+            "volatility": getattr(signal, "volatility", None),
+            "price_history": getattr(signal, "price_history", None),
+            "returns_window": getattr(signal, "returns_window", None),
+        }
+
+        # Historical outcomes could be sourced from adapter/trade history; keep empty for now
+        historical_outcomes: list[dict] = []
+
+        sensitivities = self.risk_manager.calculate_sensitivities(
+            signal, market_data, historical_outcomes
+        )
+        market_uncertainty = {"volatility": market_data.get("volatility", 0.0)}
+        adjusted = self.risk_manager.adjust_position_size_for_sensitivities(
+            base_volume, sensitivities, market_uncertainty
+        )
+        # Re-align with broker symbol constraints after RM scaling
+        if info is None:
+            info = self.adapter.get_symbol_info(symbol)
+        adjusted_aligned = self._align_with_symbol_constraints(symbol, info, adjusted, log_changes=False)
+        if adjusted_aligned != adjusted:
+            adjusted = adjusted_aligned
+        if adjusted <= 0:
+            return 0.0
+        if adjusted != base_volume:
+            logger.info(
+                f"[{symbol}] Volume adjusted by RiskManager: {base_volume:.4f} -> {adjusted:.4f}"
+            )
+        return adjusted
+
     def evaluate_signals(self, symbol: str, signals: List[EntrySignal]) -> ExecutionCycleStats:
         stats = ExecutionCycleStats()
+        all_positions = self.adapter.get_positions()
+        self._sync_order_store_from_mt5(all_positions)
+        self._update_active_signal_keys(all_positions)
         if not signals:
             return stats
-        all_positions = self.adapter.get_positions()
-        self._update_active_signal_keys(all_positions)
         candidates: List[EntrySignal] = []
         for signal in signals:
             if not self._signal_passes_validation(signal):
@@ -91,6 +151,8 @@ class OrderManager:
             raise RuntimeError("MT5 nicht verbunden")
         existing_positions = [pos for pos in all_positions if pos.get("symbol") == symbol]
         limited_signals = candidates[: self.cfg.max_open_trades]
+        self._vola_history_cache.clear()
+        vola_series = self._load_vola_series(symbol, limited_signals[0].entry_tf if limited_signals else self.cfg.timeframe)
         for idx, signal in enumerate(limited_signals):
             open_positions = existing_positions if idx == 0 else self.adapter.get_positions(symbol)
             if self.cfg.use_ml_filters:
@@ -98,26 +160,26 @@ class OrderManager:
                 confidence = float(signal.confidence or 0.0)
                 if confidence < threshold:
                     logger.info(
-                        f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Confidence {confidence:.3f}"
+                        f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Confidence {confidence:.3f}"
                         f" < Threshold {threshold:.3f}"
                     )
                     continue
             if not self._is_direction_allowed(symbol, signal.direction):
-                logger.info(f"[{symbol}] Signal {signal.direction} übersprungen: Broker untersagt diese Richtung")
+                logger.info(f"[{symbol}] Signal {signal.direction} Ã¼bersprungen: Broker untersagt diese Richtung")
                 continue
-            # Überprüfe offene Positionen und Confidence-Steigerung
+            # ÃœberprÃ¼fe offene Positionen und Confidence-Steigerung
             confidence = float(signal.confidence or 0.0)
             if open_positions:
                 last_conf = self._last_confidence.get(symbol, 0.0)
                 if confidence < last_conf + 0.07:
                     logger.info(
-                        f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Offene Position vorhanden, "
+                        f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Offene Position vorhanden, "
                         f"Confidence {confidence:.3f} nicht um 7% gestiegen (letzte: {last_conf:.3f})"
                     )
                     continue
             if self._trade_limit_hit(symbol):
                 logger.info(
-                    f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Max "
+                    f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Max "
                     f"{self.cfg.max_trades_per_symbol_per_hour} Trades/Std erreicht"
                 )
                 continue
@@ -125,25 +187,25 @@ class OrderManager:
             if cooldown_remaining is not None:
                 minutes = cooldown_remaining.total_seconds() / 60.0
                 logger.info(
-                    f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Cooldown aktiv "
+                    f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Cooldown aktiv "
                     f"({minutes:.1f}m verbleibend)"
                 )
                 continue
-            info = self.adapter.get_symbol_info(symbol)
+            info = self.adapter.get_symbol_info(symbol, refresh=True)
             if info is None:
-                logger.warning(f"[{symbol}] Keine Symbolinformationen verfügbar -> Signal übersprungen")
+                logger.warning(f"[{symbol}] Keine Symbolinformationen verfÃ¼gbar -> Signal Ã¼bersprungen")
                 continue
             stop_price, take_profit = self._scale_order_levels(signal)
             pf_ok, pf_value = self._profit_factor_ok(signal.entry_price, stop_price, take_profit)
             if not pf_ok:
                 logger.info(
-                    f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Chance/Risiko {pf_value:.2f} < "
+                    f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Chance/Risiko {pf_value:.2f} < "
                     f"Mindestfaktor {self.cfg.min_profit_factor:.2f}"
                 )
                 continue
             current_price = self._current_price(symbol, signal.direction)
             if current_price is None:
-                logger.warning(f"[{symbol}] Kein aktueller Preis verfügbar -> Signal übersprungen")
+                logger.warning(f"[{symbol}] Kein aktueller Preis verfÃ¼gbar -> Signal Ã¼bersprungen")
                 continue
             execution_price = current_price
             pending_price = self._pending_limit_price(signal)
@@ -152,19 +214,23 @@ class OrderManager:
                 if self._pending_price_allowed(pending_price, current_price, signal.direction):
                     execution_price = pending_price
                     use_pending_order = True
+            if not self._volatility_gate_allows(symbol, signal, current_price, execution_price, vola_series):
+                continue
             if not self._price_supports_order(symbol, signal.direction, execution_price, stop_price, take_profit):
                 continue
             volume, risk_amount, risk_per_lot, stop_distance = self._calculate_volume(
                 symbol, signal, info, stop_price, execution_price
             )
+            volume = self._apply_risk_manager_adjustment(symbol, signal, volume, info)
+            volume = self._align_with_symbol_constraints(symbol, info, volume)
             if volume <= 0:
                 logger.info(
-                    f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Exposure-Limit lässt kein Volumen zu"
+                    f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Exposure-Limit lÃ¤sst kein Volumen zu"
                 )
                 continue
             if self._duplicate_position_present(open_positions, signal.direction, execution_price):
                 logger.info(
-                    f"[{symbol}] Signal {signal.setup} {signal.direction} übersprungen: Position bei {execution_price:.5f} bereits vorhanden"
+                    f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Position bei {execution_price:.5f} bereits vorhanden"
                 )
                 continue
             trade_exposure = self._exposure_value(symbol, volume, execution_price, info)
@@ -172,6 +238,11 @@ class OrderManager:
                 continue
             direction = signal.direction.value if isinstance(signal.direction, Dir) else signal.direction
             try:
+                if self._orders_limit_reached():
+                    logger.warning(
+                        f"[{symbol}] Orders-Limit erreicht -> Ã¼berspringe weitere Orders in diesem Zyklus"
+                    )
+                    break
                 if use_pending_order:
                     expiration_ts = None
                     expiration_ts = 0
@@ -237,12 +308,111 @@ class OrderManager:
 
     def _current_price(self, symbol: str, direction: Dir) -> Optional[float]:
         tick = self.adapter.get_symbol_tick(symbol)
-        if not tick:
-            return None
-        price = tick.get("ask") if direction == Dir.UP else tick.get("bid")
+        price = None
+        if tick:
+            price = tick.get("ask") if direction == Dir.UP else tick.get("bid")
+        if price is None or price <= 0:
+            info = self.adapter.get_symbol_info(symbol, refresh=True)
+            if info:
+                price = getattr(info, "ask", None) if direction == Dir.UP else getattr(info, "bid", None)
+                if price is None or price <= 0:
+                    price = getattr(info, "last", None)
         if price is None or price <= 0:
             return None
         return float(price)
+
+    def _load_vola_series(self, symbol: str, entry_tf: Optional[str]) -> Optional[tuple[list[float], float]]:
+        if not getattr(self.cfg, "use_vola_gate", False):
+            return None
+        tf = (getattr(self.cfg, "vola_timeframe", None) or entry_tf or self.cfg.timeframe or "H1").upper()
+        lookback = max(int(getattr(self.cfg, "vola_lookback_bars", self.cfg.lookback_bars)), 100)
+        if tf not in {"H1", "M30"}:
+            tf = self.cfg.timeframe.upper()
+        cache_key = f"{symbol}:{tf}"
+        cached = self._vola_history_cache.get(cache_key)
+        if cached:
+            return cached
+        rates = self.adapter.get_rates(symbol, tf, lookback)
+        if not rates:
+            return None
+        closes: list[float] = []
+        for row in rates:
+            close_val = row.get("close") if isinstance(row, dict) else None
+            try:
+                close_float = float(close_val)
+            except (TypeError, ValueError):
+                continue
+            closes.append(close_float)
+        if len(closes) < getattr(self.cfg, "vola_min_samples", 0):
+            return None
+        tf_minutes = 60.0 if tf == "H1" else 30.0
+        self._vola_history_cache[cache_key] = (closes, tf_minutes)
+        return self._vola_history_cache[cache_key]
+
+    def _volatility_gate_allows(
+        self,
+        symbol: str,
+        signal: EntrySignal,
+        current_price: float,
+        execution_price: float,
+        vola_series: Optional[tuple[list[float], float]],
+    ) -> bool:
+        if not getattr(self.cfg, "use_vola_gate", False):
+            return True
+        if vola_series is None:
+            logger.info(f"[{symbol}] Vola-Gate Ã¼bersprungen: keine ausreichende Historie")
+            self._struct_event(
+                "vola_gate_skip",
+                symbol=symbol,
+                reason="no_history",
+                setup=str(signal.setup),
+                direction=str(signal.direction),
+            )
+            return True
+        closes, tf_minutes = vola_series
+        decision: Optional[VolatilityDecision] = self._volatility_gate.probability_to_reach(
+            current_price=current_price,
+            target_price=execution_price,
+            closes=closes,
+            timeframe_minutes=tf_minutes,
+        )
+        if not self._volatility_gate.allows(decision):
+            prob = decision.probability if decision else 0.0
+            logger.info(
+                f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: ReachProb {prob:.3f} < "
+                f"{self.cfg.vola_probability_threshold:.3f} (horizon {self._volatility_gate.horizon_days:.1f}d)"
+            )
+            self._struct_event(
+                "vola_gate_block",
+                symbol=symbol,
+                setup=str(signal.setup),
+                direction=str(signal.direction),
+                reach_prob=float(prob),
+                threshold=float(self.cfg.vola_probability_threshold),
+                horizon_days=float(self._volatility_gate.horizon_days),
+                samples=int(decision.samples_used if decision else 0),
+                sigma_daily=float(decision.sigma_daily if decision else 0.0),
+                z_score=float(decision.z_score if decision else 0.0),
+            )
+            return False
+        if decision:
+            logger.info(
+                f"[{symbol}] Vola-Gate ok: reach_prob {decision.probability:.3f} "
+                f"sigma_d={decision.sigma_daily:.4f} z={decision.z_score:.2f} samples={decision.samples_used}"
+            )
+            self._struct_event(
+                "vola_gate_allow",
+                symbol=symbol,
+                setup=str(signal.setup),
+                direction=str(signal.direction),
+                reach_prob=float(decision.probability),
+                threshold=float(self.cfg.vola_probability_threshold),
+                horizon_days=float(self._volatility_gate.horizon_days),
+                samples=int(decision.samples_used),
+                sigma_daily=float(decision.sigma_daily),
+                z_score=float(decision.z_score),
+            )
+        return True
 
     def _duplicate_position_present(self, positions: List[Dict[str, Any]], direction: Dir, price: float) -> bool:
         if not positions:
@@ -275,23 +445,23 @@ class OrderManager:
         if direction == Dir.UP:
             if price <= stop_price - margin + eps:
                 logger.info(
-                    f"[{symbol}] Signal {direction} übersprungen: aktueller Preis {price:.5f} <= Stop {stop_price:.5f}"
+                    f"[{symbol}] Signal {direction} Ã¼bersprungen: aktueller Preis {price:.5f} <= Stop {stop_price:.5f}"
                 )
                 return False
             if price >= take_profit + margin - eps:
                 logger.info(
-                    f"[{symbol}] Signal {direction} übersprungen: aktueller Preis {price:.5f} >= TP {take_profit:.5f}"
+                    f"[{symbol}] Signal {direction} Ã¼bersprungen: aktueller Preis {price:.5f} >= TP {take_profit:.5f}"
                 )
                 return False
         else:
             if price >= stop_price + margin - eps:
                 logger.info(
-                    f"[{symbol}] Signal {direction} übersprungen: aktueller Preis {price:.5f} >= Stop {stop_price:.5f}"
+                    f"[{symbol}] Signal {direction} Ã¼bersprungen: aktueller Preis {price:.5f} >= Stop {stop_price:.5f}"
                 )
                 return False
             if price <= take_profit - margin + eps:
                 logger.info(
-                    f"[{symbol}] Signal {direction} übersprungen: aktueller Preis {price:.5f} <= TP {take_profit:.5f}"
+                    f"[{symbol}] Signal {direction} Ã¼bersprungen: aktueller Preis {price:.5f} <= TP {take_profit:.5f}"
                 )
                 return False
         return True
@@ -357,7 +527,7 @@ class OrderManager:
     def _log_retcode_info(self, symbol: str, result: dict) -> None:
         status = result.get("status")
         if status == MetaTrader5Adapter._SKIPPED_INVALID_STOP:
-            reason = result.get("reason", "Stop nicht genügend Abstand")
+            reason = result.get("reason", "Stop nicht genÃ¼gend Abstand")
             required = result.get("required_distance")
             actual = result.get("actual_distance")
             self._log_skipped(symbol, reason, required, actual)
@@ -441,61 +611,32 @@ class OrderManager:
             cooldown = min(self._DUPLICATE_COOLDOWN_MAX, duplicate_rate * 40)
             if abs(cooldown - self._adaptive_cooldown_minutes) > 0.5:
                 logger.warning(
-                    f"[adaptive] Duplikate-Rate {duplicate_rate:.2%} -> Cooldown auf {cooldown:.1f} Minuten erhöht"
+                    f"[adaptive] Duplikate-Rate {duplicate_rate:.2%} -> Cooldown auf {cooldown:.1f} Minuten erhÃ¶ht"
                 )
             self._adaptive_cooldown_minutes = cooldown
         else:
             self._adaptive_cooldown_minutes = max(0.0, self._adaptive_cooldown_minutes - 1.0)
 
     def _resolve_store_path(self) -> Path:
-        order_store_path = self.cfg.order_store_path
-        if not order_store_path:
-            raise RuntimeError("order_store_path is not configured, but execution history is required")
-        path = Path(order_store_path)
-        if not path.parent.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+        return Path(self._order_store.path)
 
     def _load_execution_history(self) -> list[dict]:
-        path = self._resolve_store_path()
-        if not path.exists():
-            return []
-        try:
-            with path.open("r", encoding="utf-8") as fh:
-                return json.load(fh)
-        except json.JSONDecodeError:
-            logger.warning("Unerwartetes Format in order store, beginne mit leerer Historie")
-            return []
+        return self._order_store.load_executions()
 
     def _save_execution_history(self) -> None:
-        path = self._resolve_store_path()
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(self._execution_history, fh, ensure_ascii=False, indent=2)
+        self._order_store.replace_executions(self._execution_history)
 
     def _active_store_path(self) -> Path:
-        # nutzt den gleichen Ordner wie order_store_path
-        base = Path(self.cfg.order_store_path or "logs/placed_orders.json").resolve()
-        return base.parent / "active_positions.json"
+        return Path(self._order_store.path)
 
     def _load_active_store(self) -> dict[str, dict]:
-        path = self._active_store_path()
-        if not path.exists():
-            return {}
-        try:
-            with path.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
-                return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
+        return self._order_store.load_active()
 
     def _save_active_store(self) -> None:
-        path = self._active_store_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(self._active_store, fh, ensure_ascii=False, indent=2)
+        self._order_store.replace_active(self._active_store)
 
     def _initial_active_keys_from_history(self) -> set[str]:
-        """Fallback: wenn MT5-Positionsabruf fehlschlägt, verhindere Duplikate mit jüngster Historie."""
+        """Fallback: wenn MT5-Positionsabruf fehlschlÃ¤gt, verhindere Duplikate mit jÃ¼ngster Historie."""
         if not self._execution_history:
             return set()
         try:
@@ -503,7 +644,7 @@ class OrderManager:
         except Exception:
             return set()
         keys: set[str] = set()
-        for record in reversed(self._execution_history[-200:]):  # nur jüngste Einträge prüfen
+        for record in reversed(self._execution_history[-200:]):  # nur jÃ¼ngste EintrÃ¤ge prÃ¼fen
             ts = record.get("timestamp")
             try:
                 dt = datetime.fromisoformat(ts)
@@ -538,11 +679,19 @@ class OrderManager:
         if ticket:
             record["ticket"] = ticket
         self._execution_history.append(record)
-        self._save_execution_history()
+        self._order_store.append_execution(record)
         if ticket:
             self._record_active_ticket(ticket, record["key"], symbol)
 
     def _direction_from_position(self, position: dict) -> Optional[Dir]:
+        try:
+            pos_type = int(position.get("type")) if position.get("type") is not None else None
+        except Exception:
+            pos_type = None
+        if pos_type in {0}:  # buy
+            return Dir.UP
+        if pos_type in {1}:  # sell
+            return Dir.DOWN
         try:
             volume = float(position.get("volume", 0.0) or 0.0)
         except (TypeError, ValueError):
@@ -552,6 +701,37 @@ class OrderManager:
         if volume < 0:
             return Dir.DOWN
         return None
+
+    def _direction_from_order(self, order: dict) -> Optional[Dir]:
+        direction = order.get("direction")
+        if isinstance(direction, Dir):
+            return direction
+        if isinstance(direction, str):
+            try:
+                return Dir(direction)
+            except Exception:
+                pass
+        order_type = order.get("type")
+        try:
+            order_type_int = int(order_type)
+        except Exception:
+            return None
+        if order_type_int in {0, 2, 4, 6}:  # buy / buy-limit / buy-stop / buy-stop-limit
+            return Dir.UP
+        if order_type_int in {1, 3, 5, 7}:  # sell / sell-limit / sell-stop / sell-stop-limit
+            return Dir.DOWN
+        return None
+
+    def _timestamp_to_iso(self, ts: Any) -> Optional[str]:
+        try:
+            if ts is None:
+                return None
+            val = float(ts)
+            if val > 1e12:  # millis
+                val = val / 1000.0
+            return datetime.fromtimestamp(val, tz=timezone.utc).isoformat()
+        except Exception:
+            return None
 
     def _position_key_from_entry(self, position: dict) -> Optional[str]:
         symbol = position.get("symbol")
@@ -563,7 +743,75 @@ class OrderManager:
     def _record_active_ticket(self, ticket: Any, key: str, symbol: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         self._active_store[str(ticket)] = {"key": key, "symbol": symbol, "last_seen": now, "opened": now}
-        self._save_active_store()
+        self._order_store.upsert_active(str(ticket), self._active_store[str(ticket)])
+
+    def _sync_order_store_from_mt5(self, positions: Optional[List[dict]] = None) -> None:
+        if positions is None:
+            positions = self.adapter.get_positions()
+        orders = self.adapter.get_orders() if hasattr(self.adapter, "get_orders") else []
+        now_iso = datetime.now(timezone.utc).isoformat()
+        existing_exec_tickets: set[str] = {
+            str(rec.get("ticket"))
+            for rec in self._execution_history
+            if rec.get("ticket") is not None
+        }
+        seen_tickets: set[str] = set()
+
+        def record_active(ticket: str, key: str, symbol: str, opened_iso: Optional[str]) -> None:
+            entry = {
+                "key": key,
+                "symbol": symbol,
+                "last_seen": now_iso,
+                "opened": opened_iso or now_iso,
+            }
+            self._active_store[ticket] = entry
+            self._order_store.upsert_active(ticket, entry)
+
+        def maybe_append_execution(ticket: str, key: str, symbol: str, ts_iso: Optional[str]) -> None:
+            if not ticket or ticket in existing_exec_tickets:
+                return
+            record = {
+                "key": key,
+                "symbol": symbol,
+                "direction": key.split(":")[-1],
+                "timestamp": ts_iso or now_iso,
+                "ticket": ticket,
+            }
+            self._execution_history.append(record)
+            self._order_store.append_execution(record)
+            existing_exec_tickets.add(ticket)
+
+        for pos in positions or []:
+            direction = self._direction_from_position(pos)
+            symbol = pos.get("symbol")
+            ticket_raw = pos.get("ticket") or pos.get("position") or pos.get("order")
+            ticket = str(ticket_raw) if ticket_raw is not None else ""
+            if not direction or not symbol or not ticket:
+                continue
+            key = f"{symbol}:{direction.value}"
+            opened_iso = self._timestamp_to_iso(pos.get("time") or pos.get("time_msc")) or now_iso
+            record_active(ticket, key, symbol, opened_iso)
+            maybe_append_execution(ticket, key, symbol, opened_iso)
+            seen_tickets.add(ticket)
+
+        for order in orders or []:
+            direction = self._direction_from_order(order)
+            symbol = order.get("symbol")
+            ticket_raw = order.get("ticket") or order.get("order")
+            ticket = str(ticket_raw) if ticket_raw is not None else ""
+            if not direction or not symbol or not ticket:
+                continue
+            key = f"{symbol}:{direction.value}"
+            opened_iso = (
+                self._timestamp_to_iso(order.get("time_setup"))
+                or self._timestamp_to_iso(order.get("time"))
+                or now_iso
+            )
+            record_active(ticket, key, symbol, opened_iso)
+            maybe_append_execution(ticket, key, symbol, opened_iso)
+            seen_tickets.add(ticket)
+
+        self._prune_active_store(datetime.now(timezone.utc), seen_tickets)
 
     def _prune_active_store(self, now: datetime, seen_tickets: set[str]) -> None:
         if not self._active_store:
@@ -585,7 +833,7 @@ class OrderManager:
         for ticket in to_delete:
             self._active_store.pop(ticket, None)
         if to_delete:
-            self._save_active_store()
+            self._order_store.delete_tickets(to_delete)
 
     def _update_active_signal_keys(self, positions: Optional[List[dict]] = None) -> None:
         if positions is None:
@@ -611,7 +859,7 @@ class OrderManager:
         # Entferne veraltete oder geschlossene Tickets
         self._prune_active_store(now, seen_tickets)
         if not keys:
-            # nutze aktive Store-Einträge (jüngst gesehen) als letzte Sicherung gegen Duplikate
+            # nutze aktive Store-EintrÃ¤ge (jÃ¼ngst gesehen) als letzte Sicherung gegen Duplikate
             keys |= {entry.get("key") for entry in self._active_store.values() if entry.get("key")}
         self._active_signal_keys = keys
     
@@ -632,7 +880,7 @@ class OrderManager:
         parts = [reason]
         if actual is not None and required is not None:
             parts.append(f"Abstand {actual:.6f} < {required:.6f}")
-        logger.info(f"[{symbol}] Order übersprungen: {' | '.join(parts)}")
+        logger.info(f"[{symbol}] Order Ã¼bersprungen: {' | '.join(parts)}")
 
     def _profit_factor_ok(self, entry: float, stop_price: float, take_profit: float) -> Tuple[bool, float]:
         min_factor = max(0.0, self.cfg.min_profit_factor)
@@ -665,7 +913,7 @@ class OrderManager:
         if projected > allowed:
             projected_pct = (projected / balance * 100) if balance > 0 else 0.0
             logger.info(
-                f"[{symbol}] Signal übersprungen: Exponierung {projected:.2f} > Limit {allowed:.2f} (max {limit_pct*100:.2f}% vom Konto, aktuell {projected_pct:.2f}% vom Konto, Basis {self.cfg.exposure_basis})"
+                f"[{symbol}] Signal Ã¼bersprungen: Exponierung {projected:.2f} > Limit {allowed:.2f} (max {limit_pct*100:.2f}% vom Konto, aktuell {projected_pct:.2f}% vom Konto, Basis {self.cfg.exposure_basis})"
             )
             return False
         return True
@@ -730,7 +978,7 @@ class OrderManager:
             return
         timestamp = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
         embed = {
-            "title": f"Live Trade ausgeführt: {symbol} {signal.direction.value}",
+            "title": f"Live Trade ausgefÃ¼hrt: {symbol} {signal.direction.value}",
             "color": 0x1abc9c,
             "fields": [
                 {"name": "Setup", "value": signal.setup, "inline": True},
@@ -791,11 +1039,11 @@ class OrderManager:
         if retcode == self.LONG_ONLY_RETCODE and direction == Dir.DOWN:
             self._long_only_symbols.add(symbol)
             self._short_only_symbols.discard(symbol)
-            logger.warning(f"[{symbol}] Broker schränkt auf LONG ein (Retcode {retcode})")
+            logger.warning(f"[{symbol}] Broker schrÃ¤nkt auf LONG ein (Retcode {retcode})")
         elif retcode == self.SHORT_ONLY_RETCODE and direction == Dir.UP:
             self._short_only_symbols.add(symbol)
             self._long_only_symbols.discard(symbol)
-            logger.warning(f"[{symbol}] Broker schränkt auf SHORT ein (Retcode {retcode})")
+            logger.warning(f"[{symbol}] Broker schrÃ¤nkt auf SHORT ein (Retcode {retcode})")
 
     def _refresh_account_balance(self) -> float:
         info = self.adapter.get_account_info()
@@ -999,21 +1247,37 @@ class OrderManager:
                 step = max(step, info_step)
         if max_vol and volume > max_vol:
             volume = max_vol
-        if volume < min_vol:
-            normalized = min_vol
-        else:
-            step = max(step, 1e-9)
-            steps = math.floor(volume / step)
+        step = max(step, 1e-9)
+        normalized = volume
+        try:
+            steps = math.floor((volume + 1e-9) / step)
             normalized = steps * step
-            if normalized < min_vol:
-                normalized = min_vol
-            if max_vol and normalized > max_vol:
-                normalized = max_vol
+        except Exception:
+            normalized = volume
+        if normalized < min_vol:
+            normalized = min_vol
+        if max_vol and normalized > max_vol:
+            normalized = max_vol
+        normalized = round(normalized, 6)
         if log_changes and abs(normalized - volume) > 1e-9:
             logger.info(
                 f"[{symbol}] Volume an Symbol-Limits angepasst: {normalized:.3f} (min={min_vol:.3f}, max={max_vol:.3f}, step={step:.5f})"
             )
         return normalized
+
+    def _orders_limit_reached(self) -> bool:
+        limit = getattr(self.cfg, "orders_soft_limit", 0)
+        if limit <= 0:
+            return False
+        total = self.adapter.get_orders_total()
+        if total is None:
+            return False
+        if total >= limit:
+            logger.warning(
+                f"[orders] Offene/pendende Orders {total} >= Soft-Limit {limit} -> keine weiteren Orders im Zyklus"
+            )
+            return True
+        return False
 
     def _cooldown_remaining(self, symbol: str) -> Optional[timedelta]:
         cooldown = max(self.cfg.trade_cooldown_minutes, self._adaptive_cooldown_minutes)

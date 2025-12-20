@@ -1,4 +1,4 @@
-"""Wrapper um MetaTrader5, damit wir live Orders ausführen können."""
+"""Wrapper um MetaTrader5, damit wir live Orders ausfÃ¼hren kÃ¶nnen."""
 from __future__ import annotations
 
 import math
@@ -13,8 +13,26 @@ except ImportError:  # pragma: no cover
     mt5 = None  # type: ignore
 
 
+class _MockSymbolInfo:
+    """Schlanke Stub-Struktur fÃ¼r Demo-Modus ohne MT5."""
+
+    def __init__(self) -> None:
+        self.point = 0.0001
+        self.trade_tick_size = 0.0001
+        self.trade_tick_value = 1.0
+        self.trade_contract_size = 1.0
+        self.volume_min = 0.01
+        self.volume_max = 10.0
+        self.volume_step = 0.01
+        self.digits = 5
+        self.ask = 2000.05
+        self.bid = 1999.95
+        self.last = 2000.0
+        self.trade_stops_level = 50
+
+
 class MetaTrader5Adapter:
-    """Minimaler Adapter für Zugang zu MT5 (oder Mock bei installiertem MT5)."""
+    """Minimaler Adapter fÃ¼r Zugang zu MT5 (oder Mock bei installiertem MT5)."""
 
     _MIN_STOP_POINTS = 10
     _DISTANCE_EPS = 1e-6
@@ -24,15 +42,15 @@ class MetaTrader5Adapter:
         10004: "TRADE_RETCODE_REQUOTE - Requote erhalten",
         10006: "TRADE_RETCODE_REJECT - Order vom Server abgelehnt",
         10009: "TRADE_RETCODE_DONE - Order erfolgreich",
-        10010: "TRADE_RETCODE_DONE_PARTIAL - Order teilweise gefüllt",
+        10010: "TRADE_RETCODE_DONE_PARTIAL - Order teilweise gefÃ¼llt",
         10011: "TRADE_RETCODE_ERROR - Allgemeiner Trading-Fehler",
-        10014: "TRADE_RETCODE_INVALID_VOLUME - Volumen ungültig",
-        10015: "TRADE_RETCODE_INVALID_PRICE - Preis ungültig",
-        10016: "TRADE_RETCODE_INVALID_STOPS - Stops ungültig",
+        10014: "TRADE_RETCODE_INVALID_VOLUME - Volumen ungÃ¼ltig",
+        10015: "TRADE_RETCODE_INVALID_PRICE - Preis ungÃ¼ltig",
+        10016: "TRADE_RETCODE_INVALID_STOPS - Stops ungÃ¼ltig",
         10017: "TRADE_RETCODE_TRADE_DISABLED - Symbol nicht handelbar",
         10018: "TRADE_RETCODE_MARKET_CLOSED - Markt geschlossen",
         10019: "TRADE_RETCODE_NO_MONEY - Nicht genug Margin",
-        10020: "TRADE_RETCODE_PRICE_CHANGED - Preis hat sich verändert",
+        10020: "TRADE_RETCODE_PRICE_CHANGED - Preis hat sich verÃ¤ndert",
         10021: "TRADE_RETCODE_PRICE_OFF - Kein aktueller Preis",
         10030: "TRADE_RETCODE_INVALID_FILL - Filling-Mode nicht erlaubt",
         10031: "TRADE_RETCODE_CONNECTION - Verbindungsproblem",
@@ -41,13 +59,31 @@ class MetaTrader5Adapter:
         10044: "TRADE_RETCODE_CLOSE_ONLY - Nur Schliessen erlaubt",
     }
 
-    def __init__(self, login: Optional[int] = None, password: Optional[str] = None, server: Optional[str] = None):
+    def __init__(
+        self,
+        login: Optional[int] = None,
+        password: Optional[str] = None,
+        server: Optional[str] = None,
+        *,
+        force_mock: bool = False,
+        mock_account_info: Optional[Dict[str, Any]] = None,
+    ):
         self.login = login or int(os.environ.get("EW_MT5_LOGIN", "0"))
         self.password = password or os.environ.get("EW_MT5_PASSWORD", "")
         self.server = server or os.environ.get("EW_MT5_SERVER", "")
         self.connected = False
-        self._mock = mt5 is None
+        if mt5 is None and not force_mock:
+            raise RuntimeError(
+                "MetaTrader5-Python-Paket nicht verfÃ¼gbar. Bitte installieren oder --demo nutzen."
+            )
+        self._mock = bool(force_mock)
+        self._mock_account_info = dict(mock_account_info or {})
         self._symbol_cache: dict[str, "Any"] = {}
+        self._mock_ticks: dict[str, dict[str, float]] = {}
+
+    @property
+    def is_mock(self) -> bool:
+        return self._mock
 
     def _ensure_symbol_selected(self, symbol: str) -> None:
         if self._mock:
@@ -73,7 +109,19 @@ class MetaTrader5Adapter:
 
     def get_account_info(self) -> Optional[Dict[str, Any]]:
         if self._mock:
-            return None
+            if self._mock_account_info:
+                return dict(self._mock_account_info)
+            return {
+                "login": 0,
+                "balance": 10_000.0,
+                "equity": 10_000.0,
+                "margin": 0.0,
+                "free_margin": 10_000.0,
+                "margin_level": 0.0,
+                "currency": "DEMO",
+                "company": "MockBroker",
+                "leverage": 30,
+            }
         try:
             info = mt5.account_info()
             if info is None:
@@ -92,10 +140,10 @@ class MetaTrader5Adapter:
         except Exception:
             return None
 
-    def _mock_rates(self, bars: int) -> List[dict]:
+    def _mock_rates(self, symbol: str, bars: int) -> List[dict]:
         now = pd.Timestamp.utcnow().floor("s")
         timestamps = [now - pd.Timedelta(minutes=30 * i) for i in range(bars)][::-1]
-        return [
+        rates = [
             {
                 "time": int(ts.timestamp()),
                 "open": 2000.0 + i,
@@ -106,10 +154,21 @@ class MetaTrader5Adapter:
             }
             for i, ts in enumerate(timestamps)
         ]
+        if rates:
+            last_close = rates[-1]["close"]
+            self._mock_ticks[symbol] = {"bid": last_close - 0.05, "ask": last_close + 0.05, "last": last_close}
+        return rates
 
-    def get_symbol_info(self, symbol: str) -> Optional[Any]:
+    def get_symbol_info(self, symbol: str, *, refresh: bool = False) -> Optional[Any]:
+        """Fetches symbol info with optional cache refresh."""
         if self._mock:
-            return None
+            if symbol in self._symbol_cache and not refresh:
+                return self._symbol_cache[symbol]
+            info = _MockSymbolInfo()
+            self._symbol_cache[symbol] = info
+            return info
+        if refresh:
+            self._symbol_cache.pop(symbol, None)
         if symbol in self._symbol_cache:
             return self._symbol_cache[symbol]
         info = mt5.symbol_info(symbol)
@@ -119,8 +178,17 @@ class MetaTrader5Adapter:
 
     def get_symbol_tick(self, symbol: str) -> Optional[Dict[str, float]]:
         if self._mock:
-            return None
+            if symbol not in self._mock_ticks:
+                info = self.get_symbol_info(symbol)
+                base = getattr(info, "last", None) or 2000.0
+                self._mock_ticks[symbol] = {
+                    "bid": base - 0.05,
+                    "ask": base + 0.05,
+                    "last": base,
+                }
+            return dict(self._mock_ticks.get(symbol, {}))
         try:
+            self._ensure_symbol_selected(symbol)
             tick = mt5.symbol_info_tick(symbol)
             if tick is None:
                 return None
@@ -132,10 +200,43 @@ class MetaTrader5Adapter:
         except Exception:
             return None
 
+    def get_orders_total(self) -> Optional[int]:
+        """Returns total open/pending orders (mock -> 0)."""
+        if self._mock:
+            return 0
+        try:
+            orders = mt5.orders_get()
+            return len(orders) if orders is not None else 0
+        except Exception:
+            return None
+
+    def cancel_all_orders(self, symbol: Optional[str] = None) -> int:
+        """Cancels all pending orders for the given symbol (or all symbols)."""
+        if self._mock:
+            return 0
+        try:
+            orders = mt5.orders_get(symbol=symbol)
+            if not orders:
+                return 0
+            cancelled = 0
+            for order in orders:
+                ticket = getattr(order, "ticket", None)
+                if ticket is None:
+                    continue
+                request = {"action": mt5.TRADE_ACTION_REMOVE, "order": ticket}
+                result = self._send_request(request)
+                retcode = result.get("retcode")
+                if retcode == 10009:
+                    cancelled += 1
+            return cancelled
+        except Exception as exc:
+            print(f"[MT5] Cancel all orders fehlgeschlagen: {exc}")
+            return 0
+
 
     def get_rates(self, symbol: str, timeframe: str, bars: int) -> List[dict]:
         if self._mock:
-            return self._mock_rates(bars)
+            return self._mock_rates(symbol, bars)
         try:
             frame = mt5.TIMEFRAME_H1 if timeframe == "H1" else mt5.TIMEFRAME_M30
             rates = mt5.copy_rates_from_pos(symbol, frame, 0, bars)
@@ -144,10 +245,11 @@ class MetaTrader5Adapter:
             df = pd.DataFrame(rates)
             return df.to_dict("records")
         except Exception as exc:
+            # Kein Fallback auf Mock in Live-Betrieb: lieber leer zurÃ¼ckgeben und Symbol skippen.
             if self._mock:
-                return self._mock_rates(bars)
-            print(f"[MT5] Fallback auf Mock-Raten wegen: {exc}")
-            return self._mock_rates(bars)
+                return self._mock_rates(symbol, bars)
+            print(f"[MT5] Keine Kurse fÃ¼r {symbol}: {exc}")
+            return []
 
     def _resolve_point(self, info: "Any") -> float:
         point = info.point if info and hasattr(info, "point") else 0.0
@@ -203,7 +305,7 @@ class MetaTrader5Adapter:
             fallback = getattr(info, "ask", None) if op == mt5.ORDER_TYPE_BUY else getattr(info, "bid", None)
             price = fallback or getattr(info, "last", None)
         if price is None or price <= 0:
-            raise RuntimeError(f"Kein gültiger Preis für {symbol} verfügbar")
+            raise RuntimeError(f"Kein gÃ¼ltiger Preis fÃ¼r {symbol} verfÃ¼gbar")
         return price
 
     def _validate_stop_distance(
@@ -214,7 +316,7 @@ class MetaTrader5Adapter:
         if direction == "UP":
             distance = price - sl
             if distance <= 0:
-                return False, distance, min_distance, "Stop liegt über dem Kaufpreis"
+                return False, distance, min_distance, "Stop liegt Ã¼ber dem Kaufpreis"
         else:
             distance = sl - price
             if distance <= 0:
@@ -246,6 +348,21 @@ class MetaTrader5Adapter:
             return info.order_filling_mode
         return mt5.ORDER_FILLING_IOC
 
+    def _ceil_volume(self, info: "Any", volume: float) -> float:
+        min_vol = getattr(info, "volume_min", 0.0) or 0.0
+        max_vol = getattr(info, "volume_max", None)
+        step = getattr(info, "volume_step", 0.01) or 0.01
+        step = max(step, 1e-9)
+        candidate = max(volume, min_vol)
+        try:
+            steps = math.ceil((candidate + 1e-9) / step)
+            candidate = steps * step
+        except Exception:
+            candidate = candidate
+        if max_vol is not None:
+            candidate = min(candidate, max_vol)
+        return float(round(candidate, 6))
+
     @classmethod
     def describe_retcode(cls, retcode: Optional[int]) -> str:
         if retcode is None:
@@ -259,7 +376,7 @@ class MetaTrader5Adapter:
             self._ensure_symbol_selected(symbol)
             info = mt5.symbol_info(symbol)
             if info is None:
-                raise RuntimeError(f"Symbolinfo für {symbol} fehlt")
+                raise RuntimeError(f"Symbolinfo fÃ¼r {symbol} fehlt")
             op = mt5.ORDER_TYPE_BUY if direction == "UP" else mt5.ORDER_TYPE_SELL
             price = self._resolve_trade_price(symbol, info, op)
             min_distance = self._required_stop_distance(info)
@@ -304,18 +421,34 @@ class MetaTrader5Adapter:
             final_payload: Optional[dict] = None
             for mode in candidates:
                 request["type_filling"] = mode
-                payload = self._send_request(request)
-                payload["retcode_description"] = self.describe_retcode(payload.get("retcode"))
-                payload["stop_adjusted"] = adjusted
-                payload["adjusted_stop"] = sl_safe
-                payload["adjusted_distance"] = distance
-                attempts.append({"mode": mode, "retcode": payload.get("retcode"), "comment": payload.get("comment")})
-                if payload.get("retcode") != self._UNSUPPORTED_FILLING_RETCODE:
-                    payload["filling_mode_used"] = mode
-                    payload["filling_attempts"] = attempts
+                while True:
+                    payload = self._send_request(request)
+                    payload["retcode_description"] = self.describe_retcode(payload.get("retcode"))
+                    payload["stop_adjusted"] = adjusted
+                    payload["adjusted_stop"] = sl_safe
+                    payload["adjusted_distance"] = distance
+                    attempts.append(
+                        {
+                            "mode": mode,
+                            "retcode": payload.get("retcode"),
+                            "comment": payload.get("comment"),
+                            "volume": request.get("volume"),
+                        }
+                    )
+                    ret = payload.get("retcode")
+                    if ret == 10014:
+                        new_vol = self._ceil_volume(info, float(request.get("volume", 0.0)) + 1e-9)
+                        if new_vol <= float(request.get("volume", 0.0)):
+                            break
+                        request["volume"] = new_vol
+                        continue
+                    if ret != self._UNSUPPORTED_FILLING_RETCODE:
+                        payload["filling_mode_used"] = mode
+                        payload["filling_attempts"] = attempts
+                        final_payload = payload
+                        break
                     final_payload = payload
                     break
-                final_payload = payload
             if final_payload is None:
                 return {
                     "symbol": symbol,
@@ -360,7 +493,7 @@ class MetaTrader5Adapter:
             self._ensure_symbol_selected(symbol)
             info = mt5.symbol_info(symbol)
             if info is None:
-                raise RuntimeError(f"Symbolinfo für {symbol} fehlt")
+                raise RuntimeError(f"Symbolinfo fÃ¼r {symbol} fehlt")
             op = mt5.ORDER_TYPE_BUY_LIMIT if direction == "UP" else mt5.ORDER_TYPE_SELL_LIMIT
             min_distance = self._required_stop_distance(info)
             sl_candidate = self._adjust_stop(price, sl, direction, min_distance)
@@ -408,18 +541,34 @@ class MetaTrader5Adapter:
             final_payload: Optional[dict] = None
             for mode in candidates:
                 request["type_filling"] = mode
-                payload = self._send_request(request)
-                payload["retcode_description"] = self.describe_retcode(payload.get("retcode"))
-                payload["stop_adjusted"] = adjusted
-                payload["adjusted_stop"] = sl_safe
-                payload["adjusted_distance"] = distance
-                attempts.append({"mode": mode, "retcode": payload.get("retcode"), "comment": payload.get("comment")})
-                if payload.get("retcode") != self._UNSUPPORTED_FILLING_RETCODE:
-                    payload["filling_mode_used"] = mode
-                    payload["filling_attempts"] = attempts
+                while True:
+                    payload = self._send_request(request)
+                    payload["retcode_description"] = self.describe_retcode(payload.get("retcode"))
+                    payload["stop_adjusted"] = adjusted
+                    payload["adjusted_stop"] = sl_safe
+                    payload["adjusted_distance"] = distance
+                    attempts.append(
+                        {
+                            "mode": mode,
+                            "retcode": payload.get("retcode"),
+                            "comment": payload.get("comment"),
+                            "volume": request.get("volume"),
+                        }
+                    )
+                    ret = payload.get("retcode")
+                    if ret == 10014:
+                        new_vol = self._ceil_volume(info, float(request.get("volume", 0.0)) + 1e-9)
+                        if new_vol <= float(request.get("volume", 0.0)):
+                            break
+                        request["volume"] = new_vol
+                        continue
+                    if ret != self._UNSUPPORTED_FILLING_RETCODE:
+                        payload["filling_mode_used"] = mode
+                        payload["filling_attempts"] = attempts
+                        final_payload = payload
+                        break
                     final_payload = payload
                     break
-                final_payload = payload
             if final_payload is None:
                 return {
                     "symbol": symbol,
@@ -464,11 +613,53 @@ class MetaTrader5Adapter:
             print(f"[MT5] SL/TP-Anpassung fehlgeschlagen: {exc}")
             return {"status": "fallback", "ticket": ticket, "sl": sl, "tp": tp}
 
+    def _order_direction_from_type(self, order_type: Optional[int]) -> Optional[str]:
+        if mt5 is None or order_type is None:
+            return None
+        if order_type in (
+            mt5.ORDER_TYPE_BUY,
+            mt5.ORDER_TYPE_BUY_LIMIT,
+            mt5.ORDER_TYPE_BUY_STOP,
+            mt5.ORDER_TYPE_BUY_STOP_LIMIT,
+        ):
+            return "UP"
+        if order_type in (
+            mt5.ORDER_TYPE_SELL,
+            mt5.ORDER_TYPE_SELL_LIMIT,
+            mt5.ORDER_TYPE_SELL_STOP,
+            mt5.ORDER_TYPE_SELL_STOP_LIMIT,
+        ):
+            return "DOWN"
+        return None
+
+    def get_orders(self, symbol: Optional[str] = None) -> List[dict]:
+        if self._mock:
+            return []
+        try:
+            # MT5 returns None when symbol=None is passed explicitly, so only forward the filter when set.
+            orders = mt5.orders_get(symbol=symbol) if symbol is not None else mt5.orders_get()
+            if not orders:
+                return []
+            normalized: list[dict] = []
+            for order in orders:
+                if hasattr(order, "_asdict"):
+                    data = order._asdict()
+                elif hasattr(order, "__dict__"):
+                    data = {k: v for k, v in order.__dict__.items() if not k.startswith("_")}
+                else:
+                    data = {}
+                data["direction"] = self._order_direction_from_type(data.get("type"))
+                normalized.append(data)
+            return normalized
+        except Exception:
+            return []
+
     def get_positions(self, symbol: Optional[str] = None) -> List[dict]:
         if self._mock:
             return []
         try:
-            positions = mt5.positions_get(symbol=symbol)
+            # Passing symbol=None to MT5 yields None; call without filter to fetch all positions.
+            positions = mt5.positions_get(symbol=symbol) if symbol is not None else mt5.positions_get()
             if not positions:
                 return []
             normalized: list[dict] = []

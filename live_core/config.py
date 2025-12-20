@@ -1,4 +1,4 @@
-"""Konfiguration und Hilfen für das Live-System."""
+"""Konfiguration und Hilfen fÃ¼r das Live-System."""
 from __future__ import annotations
 
 import json
@@ -40,7 +40,7 @@ AGGRESSIVE_PROFILE_DEFAULTS: Dict[str, Any] = {
     "use_adx": False,
     "adx_period": 14,
     "adx_trend_threshold": 25.0,
-    "order_store_path": "logs/placed_orders.json",
+    "order_store_path": "logs/orders.db",
     "risk_per_trade": 0.04,
     "dynamic_dd_risk": True,
     "dd_risk_steps": ((-10.0, 0.75), (-20.0, 0.5), (-30.0, 0.35), (-40.0, 0.25)),
@@ -55,6 +55,11 @@ AGGRESSIVE_PROFILE_DEFAULTS: Dict[str, Any] = {
     "size_by_prob": False,
     "prob_size_min": 0.7,
     "prob_size_max": 1.5,
+    "use_vola_gate": True,
+    "vola_probability_threshold": 0.2,
+    "vola_horizon_days": 2.0,
+    "vola_lookback_bars": 400,
+    "vola_min_samples": 80,
     "ml_probability_threshold": 0.65,
     "ml_threshold_shift": 0.0,
     "dynamic_trend_scaling": True,
@@ -66,7 +71,7 @@ AGGRESSIVE_PROFILE_DEFAULTS: Dict[str, Any] = {
 
 @dataclass
 class LiveConfig:
-    """Basis-Konfiguration, die sowohl CLI als auch Produktionsläufe verwendet."""
+    """Basis-Konfiguration, die sowohl CLI als auch ProduktionslÃ¤ufe verwendet."""
 
     symbol: str = "NAS100"
     timeframe: str = "H1"
@@ -109,6 +114,12 @@ class LiveConfig:
     min_profit_factor: float = 1.0
     max_gross_exposure_pct: float = 0.0
     price_guard_margin: float = 0.0
+    orders_soft_limit: int = 180
+    use_vola_gate: bool = True
+    vola_probability_threshold: float = 0.2
+    vola_horizon_days: float = 2.0
+    vola_lookback_bars: int = 400
+    vola_min_samples: int = 80
     exposure_basis: str = "margin"
     exposure_custom_factor: float = 1.0
     exposure_default_leverage: float = 30.0
@@ -151,7 +162,7 @@ class LiveConfig:
     use_ema_trend: bool = False
     require_price_above_ema_fast: bool = False
     use_daily_ema: bool = False
-    order_store_path: Optional[str] = "logs/placed_orders.json"
+    order_store_path: Optional[str] = "logs/orders.db"
 
     def __post_init__(self) -> None:
         if not hasattr(self, "_provided_fields"):
@@ -163,7 +174,7 @@ class LiveConfig:
         provided_keys: Optional[Set[str]] = None,
         register_overrides_as_provided: bool = True,
     ) -> "LiveConfig":
-        """Returniert eine neue Config, bei der Einträge aus overrides priorisiert werden."""
+        """Returniert eine neue Config, bei der EintrÃ¤ge aus overrides priorisiert werden."""
         base_data = {k: getattr(self, k) for k in self.__dataclass_fields__}
         allowed_fields = set(self.__dataclass_fields__)
         filtered_overrides = {

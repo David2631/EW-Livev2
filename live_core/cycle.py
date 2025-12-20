@@ -1,16 +1,18 @@
 """Cycle orchestrator to run a full sweep over configured assets."""
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 import pandas as pd
 
 from .config import LiveConfig
 from .execution import ExecutionCycleStats, OrderManager
 from .mt5_adapter import MetaTrader5Adapter
-from .signals import SignalEngine
+from .signals import EntrySignal, SignalEngine
 
 
 @dataclass
@@ -45,12 +47,14 @@ class CycleRunner:
         engine: SignalEngine,
         manager: OrderManager,
         logger: Callable[[str, str], None],
+        struct_logger: Optional[logging.Logger] = None,
     ) -> None:
         self.cfg = cfg
         self.adapter = adapter
         self.engine = engine
         self.manager = manager
         self.logger = logger
+        self.struct_logger = struct_logger
         self.cycle_index = 0
 
     def run_cycle(self, symbols: Iterable[str], dry_run: bool) -> CycleSummary:
@@ -70,6 +74,16 @@ class CycleRunner:
             total_signals += len(signals)
             last_signal = signals[-1] if signals else "none"
             self.logger(symbol, f"Signals={len(signals)} LastEntry={last_signal}")
+            self._struct_log(
+                "symbol_signals",
+                {
+                    "symbol": symbol,
+                    "cycle": self.cycle_index,
+                    "signals": len(signals),
+                    "timeframe": self.cfg.timeframe,
+                    "last_entry": self._summarize_signal(last_signal) if isinstance(last_signal, EntrySignal) else None,
+                },
+            )
             stats = self.manager.evaluate_signals(symbol, signals) if not dry_run else ExecutionCycleStats()
             if stats is None:
                 stats = ExecutionCycleStats()
@@ -96,3 +110,25 @@ class CycleRunner:
             executed_trades=executed,
             dry_run=dry_run,
         )
+
+    def _summarize_signal(self, signal: EntrySignal) -> dict:
+        return {
+            "entry_time": getattr(signal.entry_time, "isoformat", lambda: str(signal.entry_time))(),
+            "direction": getattr(signal.direction, "value", signal.direction),
+            "entry_price": getattr(signal, "entry_price", None),
+            "stop_loss": getattr(signal, "stop_loss", None),
+            "take_profit": getattr(signal, "take_profit", None),
+            "confidence": getattr(signal, "confidence", None),
+            "setup": getattr(signal, "setup", None),
+            "entry_tf": getattr(signal, "entry_tf", None),
+        }
+
+    def _struct_log(self, code: str, payload: dict) -> None:
+        if not self.struct_logger:
+            return
+        event = {"code": code, "ts": datetime.now(timezone.utc).isoformat()}
+        event.update(payload)
+        try:
+            self.struct_logger.info(json.dumps(event, ensure_ascii=False))
+        except Exception:
+            self.struct_logger.info("%s %s", code, payload)

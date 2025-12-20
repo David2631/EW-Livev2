@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import logging.handlers
+import gzip
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -21,6 +25,7 @@ from live_core.signals import SignalEngine
 logger = logging.getLogger("ew_live")
 DEFAULT_REMOTE_SEGMENTS = Path(r"C:\Users\Administrator\Documents\EW-Livev2.1\logs\segments")
 LOCAL_RESULTS_SEGMENTS = Path.cwd() / "Ergebnisse" / "segments"
+STRUCT_LOGGER_NAME = "ew_struct"
 
 
 class SegmentBufferHandler(logging.Handler):
@@ -76,12 +81,49 @@ class LogSegmentWriter:
         return self.flush()
 
 
-def configure_logging(log_path: Path, extra_handlers: Optional[Sequence[logging.Handler]] = None) -> None:
+class GzipRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """Rotates log files and gzips old rotations to save space."""
+
+    def doRollover(self) -> None:  # type: ignore[override]
+        super().doRollover()
+        # gzip all backups except the active file
+        base = self.baseFilename
+        for i in range(self.backupCount, 0, -1):
+            rotated = f"{base}.{i}"
+            gz_path = rotated + ".gz"
+            if os.path.exists(rotated) and not os.path.exists(gz_path):
+                try:
+                    with open(rotated, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                        f_out.writelines(f_in)
+                    os.remove(rotated)
+                except Exception:
+                    continue
+
+
+def log_struct_event(code: str, **payload: object) -> None:
+    """Emit a compact JSON event to the struct logger (readable by Streamlit)."""
+    struct_logger = logging.getLogger(STRUCT_LOGGER_NAME)
+    event = {"code": code, "ts": datetime.now(timezone.utc).isoformat()}
+    event.update(payload)
+    try:
+        struct_logger.info(json.dumps(event, ensure_ascii=False))
+    except Exception:
+        struct_logger.info("%s %s", code, payload)
+
+
+def configure_logging(
+    log_path: Path,
+    extra_handlers: Optional[Sequence[logging.Handler]] = None,
+    struct_log_path: Optional[Path] = None,
+) -> None:
+    # Mehr Sichtbarkeit: auf INFO drehen, damit Cycle-Summary und Balance im Log landen.
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%S%z")
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_path, encoding="utf-8", maxBytes=50 * 1024 * 1024, backupCount=5
+    )
     file_handler.setFormatter(formatter)
     logger.handlers.clear()
     logger.addHandler(stream_handler)
@@ -91,11 +133,26 @@ def configure_logging(log_path: Path, extra_handlers: Optional[Sequence[logging.
             handler.setFormatter(formatter)
             logger.addHandler(handler)
 
+    # Strukturlogger
+    struct_logger = logging.getLogger("ew_struct")
+    struct_logger.setLevel(logging.INFO)
+    if struct_log_path is None:
+        struct_log_path = log_path.parent / "struct.log"
+    struct_log_path.parent.mkdir(parents=True, exist_ok=True)
+    struct_handler = GzipRotatingFileHandler(
+        struct_log_path, encoding="utf-8", maxBytes=20 * 1024 * 1024, backupCount=10
+    )
+    struct_handler.setFormatter(logging.Formatter("%(message)s"))
+    struct_logger.handlers.clear()
+    struct_logger.addHandler(struct_handler)
+    struct_logger.propagate = False
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Live-Automation für EW-Strategie ohne EMA/ML")
     parser.add_argument("--config", "-c", help="Pfad zur JSON-Konfigurationsdatei")
     parser.add_argument("--dry-run", action="store_true", help="Nur Signale berechnen, nichts senden")
+    parser.add_argument("--demo", action="store_true", help="Demo-Flag (aktuell ohne Mock, nutzt MT5 normal)")
     parser.add_argument("--once", action="store_true", help="Nur ein Zyklus statt Dauerschleife")
     parser.add_argument("--symbols-file", help="Pfad zur Datei mit einem Symbol pro Zeile (Standard: Symbols.txt)")
     parser.add_argument("--log-file", default="live_execution.log", help="Pfad zur Logdatei (Standard: live_execution.log)")
@@ -129,6 +186,15 @@ def load_symbols(path: Optional[str]) -> List[str]:
 def verify_mt5_connection(adapter: MetaTrader5Adapter) -> None:
     adapter.connect()
     info = adapter.get_account_info()
+    if getattr(adapter, "is_mock", False):
+        logger.info(
+            "MT5 Demo-Modus aktiv: benutze Mock-Adapter Balance=%(balance).2f Leverage=%(leverage)s",
+            {
+                "balance": (info or {}).get("balance", 0.0),
+                "leverage": (info or {}).get("leverage", 0),
+            },
+        )
+        return
     if not info:
         raise ConnectionError("MT5 meldet keine Kontoinformationen")
     logger.info(
@@ -148,6 +214,9 @@ def main() -> None:
     env_overrides = LiveConfig.env_overrides()
     cfg = base_config.with_overrides(env_overrides, provided_keys=set(env_overrides.keys()))
     cfg = cfg.apply_aggressive_profile()
+    cfg.use_vola_gate = True  # ensure volatility gate is enforced
+    cfg.use_ml_filters = False  # deactivate ML filter
+    cfg.ml_probability_path = None
     logger.info(
         "LiveConfig aktiv: symbol=%s timeframe=%s risk_per_trade=%.3f dynamic_dd_risk=%s use_ml_filters=%s size_short_factor=%.2f use_vol_target=%s",
         cfg.symbol,
@@ -172,7 +241,7 @@ def main() -> None:
     else:
         extra_handlers = ()
 
-    configure_logging(log_path, extra_handlers)
+    configure_logging(log_path, extra_handlers, struct_log_path=Path(log_path.parent) / "struct.log")
 
     if segment_handler:
         segment_dir = _resolve_segment_dir(log_path, args.log_segment_dir)
@@ -187,6 +256,11 @@ def main() -> None:
     except Exception as exc:
         logger.error(f"MT5-Verbindung fehlgeschlagen: {exc}")
         sys.exit(1)
+    try:
+        removed_orders = adapter.cancel_all_orders()
+        logger.info(f"[startup] {removed_orders} offene/pendende Orders gelöscht")
+    except Exception as exc:
+        logger.warning(f"[startup] Löschen offener Orders fehlgeschlagen: {exc}")
     ml_provider: Optional[MLProbabilityProvider] = None
     if cfg.ml_probability_path:
         try:
@@ -199,7 +273,7 @@ def main() -> None:
     def log_live(symbol: str, message: str) -> None:
         logger.info(f"[{symbol}] {message}")
 
-    runner = CycleRunner(cfg, adapter, engine, manager, log_live)
+    runner = CycleRunner(cfg, adapter, engine, manager, log_live, logging.getLogger(STRUCT_LOGGER_NAME))
 
     try:
         while True:
@@ -217,6 +291,21 @@ def main() -> None:
                     f"Dauer={summary.duration_seconds:.2f}s DryRun={summary.dry_run}"
                 ),
             )
+            log_struct_event(
+                "cycle_summary",
+                symbol="cycle",
+                cycle=summary.index,
+                symbols=summary.symbols_processed,
+                signals=summary.total_signals,
+                validated=summary.validated_signals,
+                executed=summary.executed_trades,
+                duplicates=summary.duplicate_signals,
+                validation_rate=validation_rate,
+                execution_rate=execution_rate,
+                duplicate_rate=duplicate_rate,
+                duration=summary.duration_seconds,
+                dry_run=summary.dry_run,
+            )
             exposure_stats = manager.report_cycle_metrics()
             log_live(
                 "cycle",
@@ -224,6 +313,15 @@ def main() -> None:
                     f"Balance={exposure_stats['balance']:.2f} Exposure={exposure_stats['exposure']:.2f} "
                     f"ExposurePct={exposure_stats['exposure_pct']:.2f}% Drawdown={exposure_stats['drawdown']:.2f}%"
                 ),
+            )
+            log_struct_event(
+                "cycle_exposure",
+                symbol="cycle",
+                cycle=summary.index,
+                balance=exposure_stats.get("balance"),
+                exposure=exposure_stats.get("exposure"),
+                exposure_pct=exposure_stats.get("exposure_pct"),
+                drawdown=exposure_stats.get("drawdown"),
             )
             if segment_writer:
                 rotated_path = segment_writer.maybe_flush(summary.index)
