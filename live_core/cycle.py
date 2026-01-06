@@ -64,7 +64,23 @@ class CycleRunner:
         validated = 0
         duplicates = 0
         executed = 0
+        momentum_exits = 0
         symbols_list = list(symbols)
+
+        # Momentum-Exit Check vor neuen Signalen
+        if not dry_run and getattr(self.cfg, "use_momentum_exit", False):
+            lookback = getattr(self.cfg, "momentum_exit_lookback", 10)
+            threshold = getattr(self.cfg, "momentum_exit_threshold", 0.002)
+            momentum_exits = self.manager.check_momentum_exits(
+                momentum_lookback=lookback,
+                momentum_threshold=-threshold,  # Negativ für adverse Bewegung
+            )
+            if momentum_exits > 0:
+                self._struct_log(
+                    "momentum_exits",
+                    {"cycle": self.cycle_index, "closed": momentum_exits},
+                )
+
         for symbol in symbols_list:
             self.cfg.symbol = symbol
             rates = self.adapter.get_rates(symbol, self.cfg.timeframe, self.cfg.lookback_bars)

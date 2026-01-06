@@ -108,10 +108,10 @@ class LiveConfig:
     entry_buffer_atr: float = 0.25
     stop_loss_multiplier: float = 1.5
     take_profit_multiplier: float = 1.0
-    min_stop_distance_pct: float = 0.0008
+    min_stop_distance_pct: float = 0.002
     trade_cooldown_minutes: int = 30
     max_trades_per_symbol_per_hour: int = 2
-    min_profit_factor: float = 1.0
+    min_profit_factor: float = 1.2
     max_gross_exposure_pct: float = 0.0
     price_guard_margin: float = 0.0
     orders_soft_limit: int = 180
@@ -120,6 +120,10 @@ class LiveConfig:
     vola_horizon_days: float = 2.0
     vola_lookback_bars: int = 400
     vola_min_samples: int = 80
+    # Momentum-Exit: Schließe Positionen bei adverser Momentum-Bewegung
+    use_momentum_exit: bool = True
+    momentum_exit_lookback: int = 10
+    momentum_exit_threshold: float = 0.002
     exposure_basis: str = "margin"
     exposure_custom_factor: float = 1.0
     exposure_default_leverage: float = 30.0

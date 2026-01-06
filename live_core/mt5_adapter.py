@@ -673,3 +673,52 @@ class MetaTrader5Adapter:
             return normalized
         except Exception:
             return []
+
+    def close_position(self, ticket: int, symbol: str, volume: float, pos_type: int) -> dict:
+        """Schließt eine Position durch Gegenorder.
+
+        Args:
+            ticket: Position ticket
+            symbol: Symbol der Position
+            volume: Volumen zum Schließen
+            pos_type: 0 = BUY (schließen mit SELL), 1 = SELL (schließen mit BUY)
+
+        Returns:
+            Result dict mit retcode etc.
+        """
+        if self._mock:
+            return {"retcode": 10009, "status": "mock", "ticket": ticket}
+        try:
+            self._ensure_symbol_selected(symbol)
+            info = self.get_symbol_info(symbol, refresh=True)
+            if info is None:
+                return {"status": "error", "reason": "Symbol info not available"}
+            tick = self.get_symbol_tick(symbol)
+            if not tick:
+                return {"status": "error", "reason": "No tick data"}
+            # Gegenorder: BUY Position -> SELL, SELL Position -> BUY
+            if pos_type == 0:  # BUY position
+                order_type = mt5.ORDER_TYPE_SELL
+                price = tick.get("bid", 0.0)
+            else:  # SELL position
+                order_type = mt5.ORDER_TYPE_BUY
+                price = tick.get("ask", 0.0)
+            request: dict[str, Any] = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": float(volume),
+                "type": order_type,
+                "position": ticket,
+                "price": price,
+                "deviation": 20,
+                "magic": 234000,
+                "comment": "momentum_exit",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            result = self._send_request(request)
+            result["retcode_description"] = self.describe_retcode(result.get("retcode"))
+            return result
+        except Exception as exc:
+            print(f"[MT5] Position close fehlgeschlagen: {exc}")
+            return {"status": "fallback", "ticket": ticket}

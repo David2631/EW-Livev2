@@ -167,16 +167,14 @@ class OrderManager:
             if not self._is_direction_allowed(symbol, signal.direction):
                 logger.info(f"[{symbol}] Signal {signal.direction} Ã¼bersprungen: Broker untersagt diese Richtung")
                 continue
-            # ÃœberprÃ¼fe offene Positionen und Confidence-Steigerung
-            confidence = float(signal.confidence or 0.0)
+            # Fix 4: Max 1 Position pro Asset - kein Reinskalieren erlaubt
             if open_positions:
-                last_conf = self._last_confidence.get(symbol, 0.0)
-                if confidence < last_conf + 0.07:
-                    logger.info(
-                        f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Offene Position vorhanden, "
-                        f"Confidence {confidence:.3f} nicht um 7% gestiegen (letzte: {last_conf:.3f})"
-                    )
-                    continue
+                logger.info(
+                    f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: "
+                    f"bereits {len(open_positions)} Position(en) offen - kein Reinskalieren"
+                )
+                continue
+            confidence = float(signal.confidence or 0.0)
             if self._trade_limit_hit(symbol):
                 logger.info(
                     f"[{symbol}] Signal {signal.setup} {signal.direction} Ã¼bersprungen: Max "
@@ -1308,3 +1306,86 @@ class OrderManager:
         while history and history[0] < cutoff:
             history.popleft()
         return history
+
+    # =========================================================================
+    # Momentum-Exit: Schließe Positionen früh bei adverser Momentum-Bewegung
+    # =========================================================================
+
+    def check_momentum_exits(self, momentum_lookback: int = 10, momentum_threshold: float = -0.002) -> int:
+        """Prüft alle offenen Positionen auf adverses Momentum und schließt sie ggf.
+
+        Args:
+            momentum_lookback: Anzahl Bars für Momentum-Berechnung
+            momentum_threshold: Schwellwert für adverses Momentum (negativ = gegen Position)
+
+        Returns:
+            Anzahl geschlossener Positionen
+        """
+        positions = self.adapter.get_positions()
+        if not positions:
+            return 0
+        closed_count = 0
+        for pos in positions:
+            symbol = pos.get("symbol")
+            ticket = pos.get("ticket")
+            pos_type = pos.get("type")  # 0 = BUY, 1 = SELL
+            volume = float(pos.get("volume", 0.0) or 0.0)
+            if not symbol or ticket is None or pos_type is None or volume <= 0:
+                continue
+            # Berechne Momentum
+            momentum = self._calculate_position_momentum(symbol, momentum_lookback)
+            if momentum is None:
+                continue
+            # Prüfe ob Momentum gegen unsere Position läuft
+            is_long = pos_type == 0
+            adverse_momentum = False
+            if is_long and momentum < momentum_threshold:
+                # Long-Position aber Preis fällt stark
+                adverse_momentum = True
+                logger.warning(
+                    f"[{symbol}] Momentum-Exit LONG: Momentum {momentum:.4f} < {momentum_threshold:.4f}"
+                )
+            elif not is_long and momentum > abs(momentum_threshold):
+                # Short-Position aber Preis steigt stark
+                adverse_momentum = True
+                logger.warning(
+                    f"[{symbol}] Momentum-Exit SHORT: Momentum {momentum:.4f} > {abs(momentum_threshold):.4f}"
+                )
+            if adverse_momentum:
+                result = self.adapter.close_position(ticket, symbol, volume, pos_type)
+                retcode = result.get("retcode")
+                if retcode == self.SUCCESS_RETCODE:
+                    logger.info(f"[{symbol}] Position {ticket} erfolgreich geschlossen (Momentum-Exit)")
+                    closed_count += 1
+                    # Entferne aus active_signal_keys damit Symbol wieder frei ist
+                    direction = Dir.UP if is_long else Dir.DOWN
+                    key = f"{symbol}:{direction.value}"
+                    self._active_signal_keys.discard(key)
+                else:
+                    logger.error(f"[{symbol}] Momentum-Exit fehlgeschlagen: {result}")
+        return closed_count
+
+    def _calculate_position_momentum(self, symbol: str, lookback: int) -> Optional[float]:
+        """Berechnet das Momentum für ein Symbol basierend auf letzten Bars.
+
+        Returns:
+            Momentum als prozentuale Änderung (positiv = steigend, negativ = fallend)
+        """
+        rates = self.adapter.get_rates(symbol, self.cfg.timeframe, lookback + 1)
+        if not rates or len(rates) < 2:
+            return None
+        closes = []
+        for row in rates:
+            close_val = row.get("close") if isinstance(row, dict) else None
+            try:
+                closes.append(float(close_val))
+            except (TypeError, ValueError):
+                continue
+        if len(closes) < 2:
+            return None
+        # Momentum = (aktueller Close - Close vor N bars) / Close vor N bars
+        first_close = closes[0]
+        last_close = closes[-1]
+        if first_close <= 0:
+            return None
+        return (last_close - first_close) / first_close
