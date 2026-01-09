@@ -336,8 +336,16 @@ def parse_args():
     p.add_argument("--vola-forecast-window", type=int, default=252, help="Trainings-Fenster für Vola-Modell (default: 252 Tage)")
     # Minimum Profit Factor (wie im Live System)
     p.add_argument("--min-pf", type=float, default=0.0, help="Min Profit Factor (TP/SL Distanz), z.B. 1.2 = nur Trades mit RR >= 1.2:1 (wie Live System)")
+    # Sanity / Execution realism helpers
+    p.add_argument("--realistic-costs", action="store_true", help="Apply conservative fee/slippage defaults for sanity checks (e.g., fee=0.05%, slippage=0.10%)")
+    p.add_argument("--enter-at-close", action="store_true", help="Enter at close of confirmation bar (legacy/backtest parity) - default: enter next open to avoid lookahead")
+    p.add_argument("--train-until", type=str, default=None, help="Force train/test split at this date (YYYY-MM-DD). Overrides TRAIN_FRAC if provided")
     # Local Data (statt yfinance)
     p.add_argument("--local-data", type=str, default=None, help="Pfad zu lokalen Daten (Basis-Name, z.B. 'daten/xauusd' lädt _daily.csv, _h1.csv, _m30.csv)")
+    p.add_argument("--institutional-report", action="store_true", help="Generate institutional-grade PDF factsheet")
+    p.add_argument("--report-out", type=str, default=None, help="Output path for institutional report (PDF)")
+    p.add_argument("--spread-pips", type=float, default=None, help="Override spread in pips (instrument-specific cost)")
+    p.add_argument("--max-lots-per-trade", type=float, default=None, help="Cap max lots per trade (e.g., 5)")
     # Manuelle Schwellen / Offsets
     p.add_argument("--thr-shift", type=float, default=None, help="Globaler Threshold Shift (additiv)")
     p.add_argument("--thr-off-w3", type=float, default=None, help="Offset W3")
@@ -1487,18 +1495,24 @@ def simulate(df:pd.DataFrame, entry_i:int, entry:float, d:Dir, stop:float, tp1:f
         if d==Dir.UP:
             extreme=max(extreme,hi); mae=min(mae,(lo-entry)/R); mfe=max(mfe,(hi-entry)/R)
             if pos==1.0 and (extreme-entry)>=R: stop=max(stop,entry)  # BE nach +1R
-            if pos==1.0 and hi>=tp1:
+            # Intrabar ambiguity: prefer conservative outcome if both TP and Stop hit in same bar (assume worst-case: Stop)
+            hit_tp1 = (pos==1.0 and hi>=tp1)
+            hit_stop = (lo<=stop)
+            if hit_tp1 and not hit_stop:
                 realized+=(tp1-entry)*0.5; pos=0.5; stop=entry
-            if lo<=stop:
+            if hit_stop:
                 realized+=(stop-entry)*pos; return i, stop, realized, mae, mfe
             if pos==0.5 and hi>=tp2:
                 realized+=(tp2-entry)*0.5; return i, tp2, realized, mae, mfe
         else:
             extreme=min(extreme,lo); mae=min(mae,(entry-float(r["high"]))/R); mfe=max(mfe,(entry-lo)/R)
             if pos==1.0 and (entry-extreme)>=R: stop=min(stop,entry)
-            if pos==1.0 and lo<=tp1:
+            # Intrabar ambiguity: prefer conservative outcome (Stop) if both TP and Stop hit in same bar
+            hit_tp1 = (pos==1.0 and lo<=tp1)
+            hit_stop = (float(r["high"])>=stop)
+            if hit_tp1 and not hit_stop:
                 realized+=(entry-tp1)*0.5; pos=0.5; stop=entry
-            if float(r["high"])>=stop:
+            if hit_stop:
                 realized+=(entry-stop)*pos; return i, stop, realized, mae, mfe
             if pos==0.5 and lo<=tp2:
                 realized+=(entry-tp2)*0.5; return i, tp2, realized, mae, mfe
@@ -1759,13 +1773,20 @@ class Backtester:
             e_idx = confirm_idx(df, t_idx, sp.direction, bars, CFG["ALLOW_TOUCH_IF_NO_CONFIRM"])
             if e_idx is None: self.telemetry["no_confirm"]+=1; continue
 
-            atr=float(df.iloc[e_idx]["ATR"])
+            # Determine entry index and price: default enter at next open to avoid lookahead; can be overridden with ENTER_AT_CLOSE
+            if CFG.get("ENTER_AT_CLOSE", False):
+                entry_idx = e_idx
+                atr = float(df.iloc[entry_idx]["ATR"])
+                entry = float(df.iloc[entry_idx]["close"])
+            else:
+                entry_idx = min(e_idx + 1, len(df) - 1)
+                atr = float(df.iloc[entry_idx]["ATR"])
+                entry = float(df.iloc[entry_idx]["open"])
             atr_mult = CFG["ATR_MULT_BUFFER"]
-            buffer=atr_mult*atr
-            stop = sp.stop_ref - buffer if sp.direction==Dir.UP else sp.stop_ref + buffer
-            entry=float(df.iloc[e_idx]["close"])
-            rps=abs(entry-stop)
-            
+            buffer = atr_mult * atr
+            stop = sp.stop_ref - buffer if sp.direction == Dir.UP else sp.stop_ref + buffer
+            rps = abs(entry - stop)
+
             # Minimum stop distance: at least 0.3% of entry price (prevents absurd position sizes)
             min_stop_pct = CFG.get("MIN_STOP_PCT", 0.003)  # 0.3% default
             min_rps = entry * min_stop_pct
@@ -1797,17 +1818,17 @@ class Backtester:
             if mom_exit_bars > 0:
                 # Higher TF: H1 for M30 entries, Daily for H1 entries
                 higher_tf_df = self.h1 if sp.entry_tf == "30m" else self.daily
-                x_idx,x_price,ps,mae,mfe = simulate(df, e_idx, entry, sp.direction, stop, sp.tp1, sp.tp2, max_hold,
+                x_idx,x_price,ps,mae,mfe = simulate(df, entry_idx, entry, sp.direction, stop, sp.tp1, sp.tp2, max_hold,
                                                      higher_tf_df=higher_tf_df, mom_exit_bars=mom_exit_bars, mom_period=mom_period)
             else:
-                x_idx,x_price,ps,mae,mfe = simulate(df, e_idx, entry, sp.direction, stop, sp.tp1, sp.tp2, max_hold)
-            
-            feats = build_features(df, e_idx, sp.direction, sp.setup, sp.zone)
+                x_idx,x_price,ps,mae,mfe = simulate(df, entry_idx, entry, sp.direction, stop, sp.tp1, sp.tp2, max_hold)
+
+            feats = build_features(df, entry_idx, sp.direction, sp.setup, sp.zone)
             label = 1 if ps>0 else 0
 
-            self.sim_trades.append(SimTrade(sp.entry_tf, e_idx, x_idx, entry, x_price, ps, rps,
+            self.sim_trades.append(SimTrade(sp.entry_tf, entry_idx, x_idx, entry, x_price, ps, rps,
                                             sp.setup, "LONG" if sp.direction==Dir.UP else "SHORT",
-                                            df.iloc[e_idx]["date"], df.iloc[x_idx]["date"],
+                                            df.iloc[entry_idx]["date"], df.iloc[x_idx]["date"],
                                             stop, sp.tp1, sp.tp2, mae, mfe, feats, label))
             self.telemetry["accepted"]+=1
         # Rolling prev win rate (based on per_share >0 among prior simulated trades)
@@ -2101,20 +2122,41 @@ class Backtester:
             size=int(max(1,size))
             pnl = float(sim.per_share * size)
             
-            # Apply trading costs (fee + slippage) - realistic execution costs
-            # Fee: percentage of trade notional (entry_price × shares)
-            # Slippage: additional execution cost as percentage of entry price
-            # Typical values: fee=0.0001 (1 bps), slippage=0.0005 (5 bps)
+            # Apply trading costs: support both percent-based and instrument-specific (commission+spread) models
+            trade_notional = float(sim.entry) * float(size)  # position value
+            # 1) Instrument-specific commission & spread (e.g., Blueberry Raw XAU)
+            units_per_lot = float(CFG.get('UNITS_PER_LOT', 1))
+            lots = float(size) / max(1.0, units_per_lot)
+            # Apply max lots cap if set
+            max_lots = CFG.get('MAX_LOTS_PER_TRADE', None)
+            if max_lots is not None:
+                if lots > max_lots:
+                    lots = max_lots
+                    size = int(max(1, lots * units_per_lot))
+            # Commission: fixed round-turn per lot
+            comm_per_lot = float(CFG.get('COMMISSION_ROUND_PER_LOT', 0.0) or 0.0)
+            if comm_per_lot > 0:
+                comm_cost = comm_per_lot * lots
+                pnl -= comm_cost
+            # Spread: modeled in pips -> converted to USD using PIP_VALUE and LOT_SIZE_OZ
+            spread_pips = float(CFG.get('SPREAD_PIPS', 0.0) or 0.0)
+            if spread_pips > 0:
+                pip_value = float(CFG.get('PIP_VALUE', 0.01) or 0.01)
+                lot_oz = float(CFG.get('LOT_SIZE_OZ', 1) or 1)
+                # Round-trip spread cost per lot (enter at ask, exit at bid = full spread)
+                spread_per_lot = spread_pips * pip_value * lot_oz
+                spread_cost = spread_per_lot * lots
+                pnl -= spread_cost
+            # 2) Legacy percent-based fee/slippage if set (keeps backward compatibility)
             fee_rate = float(CFG.get('FEE', 0.0) or 0.0)
             slip_rate = float(CFG.get('SLIPPAGE', 0.0) or 0.0)
-            trade_notional = float(sim.entry) * float(size)  # position value
             if fee_rate > 0:
                 # Fee as % of notional, round-trip (entry + exit)
                 fee_cost = trade_notional * fee_rate * 2
                 pnl -= fee_cost
             if slip_rate > 0:
-                # Slippage as % of entry price, applied to position
-                slip_cost = trade_notional * slip_rate * 2  # round-trip
+                # Slippage as % of entry price, applied to position (round-trip)
+                slip_cost = trade_notional * slip_rate * 2
                 pnl -= slip_cost
             
             # FTMO payout split: only a fraction of profits are retained, losses full
@@ -2159,18 +2201,30 @@ class Backtester:
         self.build_setups()
         self.simulate_all()
         if not self.sim_trades: return {}
-        times=sorted([t.time_in for t in self.sim_trades])
-        split_idx=max(1, int(len(times)*CFG["TRAIN_FRAC"]))
-        # Purging gap: skip trades between train and test to avoid leakage
-        purge_bars = CFG.get('TRAIN_TEST_PURGE_BARS', 0)
-        if purge_bars > 0 and split_idx + purge_bars < len(times):
-            train_until = times[split_idx - 1]
-            # Adjust OOS start to skip purge window
-            oos_start_idx = split_idx + purge_bars
-            self._purged_oos_start = times[oos_start_idx] if oos_start_idx < len(times) else train_until
-        else:
-            train_until = times[split_idx - 1]
+        times = sorted([t.time_in for t in self.sim_trades])
+        # Optional explicit train-until date (override fraction-based split)
+        if CFG.get('TRAIN_UNTIL', None) is not None:
+            requested = pd.to_datetime(CFG['TRAIN_UNTIL'])
+            candidates = [t for t in times if pd.to_datetime(t) <= requested]
+            if candidates:
+                train_until = candidates[-1]
+            else:
+                # fallback to fraction-based split if no trades exist before given date
+                split_idx = max(1, int(len(times) * CFG["TRAIN_FRAC"]))
+                train_until = times[split_idx - 1]
             self._purged_oos_start = train_until
+        else:
+            split_idx = max(1, int(len(times)*CFG["TRAIN_FRAC"]))
+            # Purging gap: skip trades between train and test to avoid leakage
+            purge_bars = CFG.get('TRAIN_TEST_PURGE_BARS', 0)
+            if purge_bars > 0 and split_idx + purge_bars < len(times):
+                train_until = times[split_idx - 1]
+                # Adjust OOS start to skip purge window
+                oos_start_idx = split_idx + purge_bars
+                self._purged_oos_start = times[oos_start_idx] if oos_start_idx < len(times) else train_until
+            else:
+                train_until = times[split_idx - 1]
+                self._purged_oos_start = train_until
         # Speichern für spätere Re-Simulationen (Deep Rerun)
         self.train_until = train_until
 
@@ -3046,6 +3100,38 @@ def main():
         if getattr(args,'no_confirm',False): base['REQUIRE_CONFIRM']=False
         base['DEEP_CF']=getattr(args,'deep_counterfactuals',False)
         base['FULL_GRID_CF']=getattr(args,'full_grid_cf',False)
+        # Entry timing: by default enter next open to avoid lookahead; legacy behavior available
+        base['ENTER_AT_CLOSE'] = True if getattr(args,'enter_at_close',False) else False
+        # Realistic costs shortcut for sanity checks
+        if getattr(args,'realistic_costs', False):
+            # Only override defaults if user hasn't passed explicit fee/slippage
+            if getattr(args,'fee', None) == 0.0:
+                base['FEE'] = 0.0005
+            if getattr(args,'slippage', None) == 0.0:
+                base['SLIPPAGE'] = 0.001
+            print(f"[REALISTIC] Applied FEE={base['FEE']:.5f}, SLIPPAGE={base['SLIPPAGE']:.5f}")
+        # Default Blueberry Raw costs for Gold (XAU) — applied unless user provides values
+        if 'XAU' in sym.upper():
+            base.setdefault('COMMISSION_ROUND_PER_LOT', 7.0)   # $7 round-turn
+            base.setdefault('LOT_SIZE_OZ', 100)               # 1 lot = 100 oz
+            base.setdefault('UNITS_PER_LOT', 100)             # units used for size->lots conversion
+            base.setdefault('PIP_VALUE', 0.01)                # pip = $0.01 per oz
+            base.setdefault('SPREAD_PIPS', 0.7)               # median ~0.7 pips
+            print(f"[BROKER DEFAULTS] Blueberry Raw applied for {sym}: COMM=${base['COMMISSION_ROUND_PER_LOT']}/lot, SPREAD={base['SPREAD_PIPS']} pips (pip={base['PIP_VALUE']}$, lot={base['LOT_SIZE_OZ']}oz)")
+        # CLI overrides
+        if getattr(args, 'spread_pips', None) is not None:
+            base['SPREAD_PIPS'] = float(getattr(args, 'spread_pips'))
+            print(f"[OVERRIDE] Spread override: {base['SPREAD_PIPS']} pips")
+        if getattr(args, 'max_lots_per_trade', None) is not None:
+            base['MAX_LOTS_PER_TRADE'] = float(getattr(args, 'max_lots_per_trade'))
+            print(f"[OVERRIDE] Max lots per trade: {base['MAX_LOTS_PER_TRADE']}")
+        # Optional explicit train-until date for OOS split (overrides TRAIN_FRAC split)
+        if getattr(args,'train_until', None):
+            try:
+                base['TRAIN_UNTIL'] = pd.to_datetime(args.train_until)
+                print(f"[OOS] Forced train_until: {base['TRAIN_UNTIL'].date()}")
+            except Exception:
+                print(f"[WARN] Ungültiges Datum für --train-until: {args.train_until}")
         for k,v in [('APPLY_THRESHOLD_SHIFT',0.0),('THR_OFFSET_W3',0.0),('THR_OFFSET_C',0.0),('THR_OFFSET_W5',0.0),('THR_OFFSET_OTHER',0.0)]:
             base.setdefault(k,v)
         # --- NEUTRAL MODE: disable overfitting-prone features ---
@@ -3112,6 +3198,43 @@ def main():
             print(f"Total Return: {metrics['total_return']:.2f}% | CAGR: {metrics['cagr']:.2f}% | Trades: {metrics['trades']}")
             print(f"Winrate: {metrics['hit']:.2f}% | PF: {metrics['profit_factor']:.2f} | Expectancy: ${metrics['expectancy']:.2f}")
             print(f"Vol (ann.): {metrics['vol']:.2f}% | Sharpe: {metrics['sharpe']:.2f} | Sortino: {metrics['sortino']:.2f} | UPI: {metrics['upi']:.2f} | GPR: {metrics['gain_to_pain']:.2f}")
+
+            # Optional: institutional PDF factsheet
+            if getattr(args, 'institutional_report', False):
+                try:
+                    from reports.institutional_report import generate_report, ReportOptions
+                    out = args.report_out if getattr(args, 'report_out', None) else f"Ergebnisse/PDF/{sym}_INSTITUTIONAL_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                    # Prepare series & trades
+                    eq_series = pd.Series({e['date']: e['capital'] for e in metrics.get('equity', [])})
+                    eq_series.index = pd.to_datetime(eq_series.index)
+                    trades_df = pd.read_csv(metrics.get('csv', '')) if metrics.get('csv') else pd.read_csv(metrics.get('csv_path','')) if metrics.get('csv_path') else None
+                    if trades_df is None:
+                        # include full trade dict to preserve size, rr, risk_per_share etc.
+                        trades_df = pd.DataFrame([t.__dict__ for t in bt.trades])
+                    trades_df['time_in'] = pd.to_datetime(trades_df['time_in'])
+                    trades_df['time_out'] = pd.to_datetime(trades_df['time_out'])
+                    opts = ReportOptions(title=f"{sym} Institutional Factsheet", version="1.0", rf_rate=0.04, compounding=True, monte_carlo_runs=1000)
+                    cfg_report = CFG.copy()
+                    cfg_report.update({
+                        'SYMBOL': sym,
+                        # Pass pre-computed metrics from CLI for consistency
+                        'profit_factor': metrics.get('profit_factor', 0.0),
+                        'sharpe': metrics.get('sharpe', 0.0),
+                        'sortino': metrics.get('sortino', 0.0),
+                        'vol_annual': metrics.get('vol', 0.0),
+                        'cagr': metrics.get('cagr', 0.0),
+                        'total_return': metrics.get('total_return', 0.0),
+                        'max_dd': metrics.get('max_dd', 0.0),
+                    })
+                    print(f"[REPORT] Generating institutional PDF: {out}")
+                    generate_report(eq_series.sort_index(), trades_df.sort_values('time_in'), cfg_report, out, options=opts)
+                    print(f"[REPORT] Saved: {out}")
+                    # If institutional report requested, skip legacy CSV/PDF generation
+                    if getattr(args, 'institutional_report', False):
+                        print(f"[REPORT] Institutional-only mode. Skipping legacy CSV/PDF for {sym}.")
+                        continue
+                except Exception as e:
+                    print(f"[REPORT] Failed generating institutional report: {e}")
             # FTMO Challenge (symbol-level): pass-rate across attempts under FTMO rules
             if getattr(args,'ftmo_challenge', None):
                 try:

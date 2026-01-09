@@ -157,6 +157,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols-file", help="Pfad zur Datei mit einem Symbol pro Zeile (Standard: Symbols.txt)")
     parser.add_argument("--log-file", default="live_execution.log", help="Pfad zur Logdatei (Standard: live_execution.log)")
     parser.add_argument(
+        "--momentum-exit",
+        action="store_true",
+        help="Momentum-Exit aktivieren: Schließe Positionen bei schwächelndem Momentum auf H1 (Standard: aus)",
+    )
+    parser.add_argument(
         "--log-segment-dir",
         help=(
             "Optionaler Ordner für segmentierte Logs (Standard: C:\\Users\\Administrator\\Documents"
@@ -217,6 +222,14 @@ def main() -> None:
     cfg.use_vola_gate = True  # ensure volatility gate is enforced
     cfg.use_ml_filters = False  # deactivate ML filter
     cfg.ml_probability_path = None
+    
+    # Momentum-Exit via CLI Flag aktivieren (Standard: aus)
+    if getattr(args, 'momentum_exit', False):
+        cfg.use_momentum_exit = True
+        logger.info("Momentum-Exit aktiviert via --momentum-exit Flag")
+    else:
+        cfg.use_momentum_exit = False
+    
     logger.info(
         "LiveConfig aktiv: symbol=%s timeframe=%s risk_per_trade=%.3f dynamic_dd_risk=%s use_ml_filters=%s size_short_factor=%.2f use_vol_target=%s",
         cfg.symbol,
