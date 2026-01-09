@@ -121,7 +121,7 @@ class LiveConfig:
     min_stop_distance_pct: float = 0.003
     trade_cooldown_minutes: int = 30
     max_trades_per_symbol_per_hour: int = 2
-    min_profit_factor: float = 1.2
+    min_profit_factor: float = 0.0  # Default: kein PF-Filter, aktivieren via --min-pf Flag
     max_gross_exposure_pct: float = 0.0
     price_guard_margin: float = 0.0
     orders_soft_limit: int = 180

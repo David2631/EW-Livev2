@@ -162,6 +162,12 @@ def parse_args() -> argparse.Namespace:
         help="Momentum-Exit aktivieren: Schließe Positionen bei schwächelndem Momentum auf H1 (Standard: aus)",
     )
     parser.add_argument(
+        "--min-pf",
+        type=float,
+        default=None,
+        help="Min Profit Factor (TP/SL Ratio), z.B. 1.2. Ohne Flag: kein PF-Filter",
+    )
+    parser.add_argument(
         "--log-segment-dir",
         help=(
             "Optionaler Ordner für segmentierte Logs (Standard: C:\\Users\\Administrator\\Documents"
@@ -229,6 +235,15 @@ def main() -> None:
         logger.info("Momentum-Exit aktiviert via --momentum-exit Flag")
     else:
         cfg.use_momentum_exit = False
+    
+    # Min Profit Factor via CLI Flag (Standard: aus/kein Filter)
+    min_pf = getattr(args, 'min_pf', None)
+    if min_pf is not None and min_pf > 0:
+        cfg.min_profit_factor = min_pf
+        logger.info(f"Min-PF Filter aktiviert: nur Trades mit TP/SL >= {min_pf:.2f}")
+    else:
+        cfg.min_profit_factor = 0.0
+        logger.info("Min-PF Filter deaktiviert (kein --min-pf Flag)")
     
     logger.info(
         "LiveConfig aktiv: symbol=%s timeframe=%s risk_per_trade=%.3f dynamic_dd_risk=%s use_ml_filters=%s size_short_factor=%.2f use_vol_target=%s",
