@@ -130,11 +130,11 @@ class LiveConfig:
     vola_horizon_days: float = 2.0
     vola_lookback_bars: int = 400
     vola_min_samples: int = 80
-    # Momentum-Exit (Backtest-Parität): Höhere TF, konsekutive abnehmende Bars
+    # Momentum-Exit: H2 Chart, 3 konsekutive Bars
     use_momentum_exit: bool = True
     momentum_exit_bars: int = 3           # Konsekutive Bars mit schwächerem Momentum
     momentum_period: int = 14             # Lookback für Momentum-Berechnung
-    momentum_exit_higher_tf: bool = True  # H1 für M30, Daily für H1
+    momentum_exit_tf: str = "H2"          # Timeframe für Momentum-Check (H2 = 2h)
     exposure_basis: str = "margin"
     exposure_custom_factor: float = 1.0
     exposure_default_leverage: float = 30.0

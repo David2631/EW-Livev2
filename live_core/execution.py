@@ -739,6 +739,7 @@ class OrderManager:
         # Level 1: Check if we already have an active position in this direction
         simple_key = self._signal_key_simple(symbol, signal)
         if simple_key in self._active_signal_keys:
+            logger.debug(f"[{symbol}] Duplikat erkannt via active_signal_keys: {simple_key}")
             return True
         
         # Level 2: Check recent execution history for same setup within dedup window
@@ -746,6 +747,10 @@ class OrderManager:
         dedup_window = getattr(self.cfg, "signal_dedup_window_minutes", 120)
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(minutes=dedup_window)
+        
+        # Normalize base symbol for comparison
+        base_symbol = self._normalize_symbol_base(symbol)
+        signal_dir_val = signal.direction.value if isinstance(signal.direction, Dir) else str(signal.direction)
         
         for record in reversed(self._execution_history[-100:]):
             rec_key = record.get("key", "")
@@ -758,22 +763,27 @@ class OrderManager:
                         if rec_time.tzinfo is None:
                             rec_time = rec_time.replace(tzinfo=timezone.utc)
                         if rec_time > cutoff:
+                            logger.debug(f"[{symbol}] Duplikat erkannt via full_key match")
                             return True
                     except Exception:
                         pass
-            # Also block if same symbol+direction executed very recently (within 5 minutes)
-            rec_symbol = record.get("symbol")
+            # Also block if same BASE symbol+direction executed recently (within 30 minutes)
+            # This catches ETSY.NYS vs ETSY.NAS
+            rec_symbol = record.get("symbol", "")
+            rec_base = self._normalize_symbol_base(rec_symbol)
             rec_dir = record.get("direction")
             rec_dir_val = rec_dir.value if isinstance(rec_dir, Dir) else str(rec_dir) if rec_dir else ""
-            signal_dir_val = signal.direction.value if isinstance(signal.direction, Dir) else str(signal.direction)
-            if rec_symbol == symbol and rec_dir_val == signal_dir_val:
+            
+            if rec_base == base_symbol and rec_dir_val == signal_dir_val:
                 ts_str = record.get("timestamp")
                 if ts_str:
                     try:
                         rec_time = datetime.fromisoformat(ts_str)
                         if rec_time.tzinfo is None:
                             rec_time = rec_time.replace(tzinfo=timezone.utc)
-                        if rec_time > now - timedelta(minutes=5):
+                        # Block for 30 minutes instead of 5
+                        if rec_time > now - timedelta(minutes=30):
+                            logger.debug(f"[{symbol}] Duplikat erkannt: {rec_symbol} same base ({rec_base})")
                             return True
                     except Exception:
                         pass
@@ -1473,10 +1483,9 @@ class OrderManager:
     def check_momentum_exits(self) -> int:
         """Prüft alle offenen Positionen auf abnehmenden Momentum auf höherer TF.
         
-        Backtest-Logik:
-        - M30-Entry → Check Momentum auf H1
-        - H1-Entry → Check Momentum auf Daily
-        - Nach N konsekutiven Bars mit schwächer werdendem Momentum → Exit
+        Logik:
+        - Alle Entries checken Momentum auf H2 (2h Chart)
+        - Nach 3 konsekutiven Bars mit schwächer werdendem Momentum → Exit
         
         Returns:
             Anzahl geschlossener Positionen
@@ -1486,7 +1495,7 @@ class OrderManager:
             
         momentum_exit_bars = getattr(self.cfg, "momentum_exit_bars", 3)
         momentum_period = getattr(self.cfg, "momentum_period", 14)
-        use_higher_tf = getattr(self.cfg, "momentum_exit_higher_tf", True)
+        momentum_tf = getattr(self.cfg, "momentum_exit_tf", "H2")  # H2 = 2h Chart
         
         positions = self.adapter.get_positions()
         if not positions:
@@ -1505,15 +1514,8 @@ class OrderManager:
             
             is_long = pos_type == 0
             
-            # Bestimme höhere TF basierend auf Entry-TF
-            # Entry auf M30 → Check auf H1, Entry auf H1 → Check auf Daily
-            if use_higher_tf:
-                higher_tf = "H1" if self.cfg.timeframe == "M30" else "D1"
-            else:
-                higher_tf = self.cfg.timeframe
-            
-            # Berechne aktuelles Momentum auf höherer TF
-            current_mom = self._calculate_higher_tf_momentum(symbol, higher_tf, momentum_period)
+            # Berechne aktuelles Momentum auf H2
+            current_mom = self._calculate_higher_tf_momentum(symbol, momentum_tf, momentum_period)
             if current_mom is None:
                 continue
             
